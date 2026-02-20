@@ -1,0 +1,67 @@
+import json
+import anthropic
+from pathlib import Path
+from .project_analyzer import ProjectInfo
+
+INSTRUCTION_PARSE_PROMPT = """
+Analyze the following project setup instructions and extract:
+1. Required system dependencies
+2. Installation steps in order
+3. Environment variables needed
+4. Known version requirements
+
+Instructions:
+{readme_content}
+
+Return ONLY valid JSON:
+{{
+  "system_dependencies": ["redis", "postgresql"],
+  "steps": [
+    {{"order": 1, "action": "install_packages", "command": "npm install"}}
+  ],
+  "env_vars": {{
+    "DATABASE_URL": "postgres://localhost/myapp"
+  }},
+  "version_constraints": {{
+    "node": ">=18.0.0"
+  }}
+}}
+"""
+
+class NLPProcessor:
+    def __init__(self):
+        self.client = anthropic.Anthropic()
+
+    def parse_readme(self, project_path: Path) -> dict:
+        readme = self._find_readme(project_path)
+        if not readme:
+            return {}
+
+        message = self.client.messages.create(
+            model="claude-opus-4-6",
+            max_tokens=1024,
+            messages=[{
+                "role": "user",
+                "content": INSTRUCTION_PARSE_PROMPT.format(readme_content=readme)
+            }]
+        )
+
+        raw = message.content[0].text
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            clean = raw.strip().removeprefix("```json").removesuffix("```").strip()
+            return json.loads(clean)
+
+    def _find_readme(self, project_path: Path) -> str:
+        for name in ['README.md', 'README.txt', 'INSTALL.md', 'readme.md']:
+            f = project_path / name
+            if f.exists():
+                return f.read_text(encoding='utf-8', errors='ignore')
+        return ""
+
+    def merge_with_project_info(self, info: ProjectInfo, nlp_result: dict) -> ProjectInfo:
+        info.steps = nlp_result.get('steps', [])
+        info.env_vars = nlp_result.get('env_vars', {})
+        info.version_constraints = nlp_result.get('version_constraints', {})
+        return info
