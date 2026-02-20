@@ -1,7 +1,11 @@
 import json
-import anthropic
+import os
+from groq import Groq
 from pathlib import Path
+from dotenv import load_dotenv
 from .project_analyzer import ProjectInfo
+
+load_dotenv()
 
 INSTRUCTION_PARSE_PROMPT = """
 Analyze the following project setup instructions and extract:
@@ -13,7 +17,7 @@ Analyze the following project setup instructions and extract:
 Instructions:
 {readme_content}
 
-Return ONLY valid JSON:
+Return ONLY valid JSON with no extra text:
 {{
   "system_dependencies": ["redis", "postgresql"],
   "steps": [
@@ -30,23 +34,22 @@ Return ONLY valid JSON:
 
 class NLPProcessor:
     def __init__(self):
-        self.client = anthropic.Anthropic()
+        self.client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
     def parse_readme(self, project_path: Path) -> dict:
         readme = self._find_readme(project_path)
         if not readme:
             return {}
 
-        message = self.client.messages.create(
-            model="claude-opus-4-6",
-            max_tokens=1024,
-            messages=[{
-                "role": "user",
-                "content": INSTRUCTION_PARSE_PROMPT.format(readme_content=readme)
-            }]
+        prompt = INSTRUCTION_PARSE_PROMPT.format(readme_content=readme)
+
+        response = self.client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}]
         )
 
-        raw = message.content[0].text
+        raw = response.choices[0].message.content
+
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
@@ -54,11 +57,28 @@ class NLPProcessor:
             return json.loads(clean)
 
     def _find_readme(self, project_path: Path) -> str:
-        for name in ['README.md', 'README.txt', 'INSTALL.md', 'readme.md']:
+        candidates = [
+            'README.md', 'README.txt', 'README.rst',
+            'INSTALL.md', 'INSTALL.txt',
+            'SETUP.md', 'SETUP.txt',
+            'GETTING_STARTED.md',
+            'steps.txt', 'steps.md',
+            'instructions.txt', 'instructions.md',
+            'readme.md', 'readme.txt',
+    ]
+        #check for exact names first
+        for name in candidates:
             f = project_path / name
             if f.exists():
                 return f.read_text(encoding='utf-8', errors='ignore')
+        #scan all .txt/.md files if no exact match
+        for ext in ['*.md', '*.txt', '*.rst']:
+            matches = list(project_path.glob(ext))
+            if matches:
+                return matches[0].read_text(encoding='utf-8', errors='ignore')
+
         return ""
+
 
     def merge_with_project_info(self, info: ProjectInfo, nlp_result: dict) -> ProjectInfo:
         info.steps = nlp_result.get('steps', [])
