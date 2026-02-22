@@ -1,17 +1,24 @@
+import asyncio
+import os
+import sys
 import uuid
 import subprocess
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 from app.core.analysis.project_analyzer import ProjectAnalyzer
 from app.core.analysis.nlp_processor import NLPProcessor
+from app.db.session import get_db
+from app.db.crud import project_crud
 
 router = APIRouter()
 analyzer = ProjectAnalyzer()
 nlp = NLPProcessor()
 
-CLONE_BASE_DIR = Path("C:/tmp/intelligent-assistant")
+# Works on both Windows (local) and Linux (Docker)
+CLONE_BASE_DIR = Path(os.getenv("CLONE_BASE_DIR", "/tmp/intelligent-assistant" if sys.platform != "win32" else "C:/tmp/intelligent-assistant"))
 
 class ProjectSource(BaseModel):
     type: str            # "git" or "local"
@@ -23,15 +30,18 @@ class CreateProjectRequest(BaseModel):
     source: ProjectSource
 
 @router.post("/api/projects")
-async def create_project(req: CreateProjectRequest):
+async def create_project(req: CreateProjectRequest, db: Session = Depends(get_db)):
     project_id = f"proj_{uuid.uuid4().hex[:8]}"
     task_id = f"task_{uuid.uuid4().hex[:8]}"
+    project_path = None
 
     # Determine project path
     if req.source.type == "git":
         if not req.source.url:
             raise HTTPException(status_code=400, detail="url is required for git source")
-        project_path = _clone_repo(req.source.url)
+        # Run blocking git clone in a thread so the server stays responsive
+        loop = asyncio.get_event_loop()
+        project_path = await loop.run_in_executor(None, _clone_repo, req.source.url)
 
     elif req.source.type == "local":
         if not req.source.path:
@@ -39,17 +49,36 @@ async def create_project(req: CreateProjectRequest):
         project_path = Path(req.source.path)
         if not project_path.exists():
             raise HTTPException(status_code=400, detail="path does not exist")
+    else:
+        raise HTTPException(status_code=400, detail="invalid source type")
 
-    # Analyze
+    # Analyze (NLP call is blocking — run in executor too)
+    loop = asyncio.get_event_loop()
     info = analyzer.detect_project_type(project_path)
-    nlp_result = nlp.parse_readme(project_path)
+    nlp_result = await loop.run_in_executor(None, nlp.parse_readme, project_path)
     info = nlp.merge_with_project_info(info, nlp_result)
 
-    # Open VS Code on the project folder
-    code_path = "D:\\software installs\\Microsoft VS Code\\bin\\code.cmd"
-    subprocess.Popen([code_path, str(project_path)], shell=True)
+    # Open VS Code on the project folder (Windows only)
+    if sys.platform == "win32":
+        code_path = "D:\\software installs\\Microsoft VS Code\\bin\\code.cmd"
+        subprocess.Popen([code_path, str(project_path)], shell=True)
 
-    # TODO: persist to DB, queue Celery task
+    # Persist to DB
+    project_name = Path(str(project_path)).name
+    project_crud.create(db, {
+        "id": project_id,
+        "name": project_name,
+        "type": info.primary_language,
+        "path": str(project_path),
+        "status": "queued",
+        "metadata_": {
+            "detected_pm": info.primary_pm,
+            "steps": info.steps,
+            "env_vars": info.env_vars,
+            "version_constraints": info.version_constraints,
+        },
+    })
+
     return {
         "project_id": project_id,
         "status": "queued",
@@ -63,9 +92,18 @@ async def create_project(req: CreateProjectRequest):
     }
 
 @router.get("/api/projects/{project_id}")
-async def get_project(project_id: str):
-    # TODO: query DB
-    return {"id": project_id, "status": "analyzing"}
+async def get_project(project_id: str, db: Session = Depends(get_db)):
+    project = project_crud.get(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {
+        "id": project.id,
+        "name": project.name,
+        "type": project.type,
+        "path": project.path,
+        "status": project.status,
+        "metadata": project.metadata_,
+    }
 
 def _clone_repo(git_url: str) -> Path:
     CLONE_BASE_DIR.mkdir(parents=True, exist_ok=True)

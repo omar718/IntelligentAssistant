@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from groq import Groq
 from pathlib import Path
 from dotenv import load_dotenv
@@ -39,22 +40,40 @@ class NLPProcessor:
     def parse_readme(self, project_path: Path) -> dict:
         readme = self._find_readme(project_path)
         if not readme:
+            print(f"[NLPProcessor] No README found in {project_path}")
             return {}
 
-        prompt = INSTRUCTION_PARSE_PROMPT.format(readme_content=readme)
-
-        response = self.client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        raw = response.choices[0].message.content
+        print(f"[NLPProcessor] README found ({len(readme)} chars), sending to Groq...")
+        prompt = INSTRUCTION_PARSE_PROMPT.format(readme_content=readme[:6000])  # cap to avoid token limits
 
         try:
-            return json.loads(raw)
+            response = self.client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}]
+            )
+        except Exception as e:
+            print(f"[NLPProcessor] Groq API call failed: {e}")
+            return {}
+
+        raw = response.choices[0].message.content
+        print(f"[NLPProcessor] Groq raw response: {raw[:300]}")
+
+        try:
+            result = json.loads(raw)
+            print(f"[NLPProcessor] Parsed OK — steps: {len(result.get('steps', []))}")
+            return result
         except json.JSONDecodeError:
-            clean = raw.strip().removeprefix("```json").removesuffix("```").strip()
-            return json.loads(clean)
+            try:
+                # Strip any flavour of code fence: ```json, ```JSON, or plain ```
+                clean = raw.strip()
+                clean = re.sub(r'^```[a-zA-Z]*\n?', '', clean)
+                clean = re.sub(r'```$', '', clean).strip()
+                result = json.loads(clean)
+                print(f"[NLPProcessor] Parsed after strip — steps: {len(result.get('steps', []))}")
+                return result
+            except json.JSONDecodeError:
+                print(f"[NLPProcessor] Failed to parse Groq response as JSON: {raw[:300]}")
+                return {}
 
     def _find_readme(self, project_path: Path) -> str:
         candidates = [

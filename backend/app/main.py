@@ -1,3 +1,7 @@
+from dotenv import load_dotenv
+load_dotenv()                          # loads .env (Docker defaults: host=db)
+load_dotenv(".env.local", override=True)  # local override: host=localhost
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import projects
