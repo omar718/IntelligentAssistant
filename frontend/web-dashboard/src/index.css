@@ -3,9 +3,14 @@
   line-height: 1.5;
   font-weight: 400;
 
+<<<<<<< HEAD
   color-scheme: light dark;
   color: rgba(255, 255, 255, 0.87);
   background-color: #242424;
+=======
+  color: #fff;
+  background-color: #0f1729;
+>>>>>>> 3ade95e3b9400a2d0d2057a796e69cb67c65e250
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -13,6 +18,7 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+<<<<<<< HEAD
 a {
   font-weight: 500;
   color: #646cff;
@@ -20,16 +26,26 @@ a {
 }
 a:hover {
   color: #535bf2;
+=======
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+>>>>>>> 3ade95e3b9400a2d0d2057a796e69cb67c65e250
 }
 
 body {
   margin: 0;
+<<<<<<< HEAD
   display: flex;
   place-items: center;
+=======
+>>>>>>> 3ade95e3b9400a2d0d2057a796e69cb67c65e250
   min-width: 320px;
   min-height: 100vh;
 }
 
+<<<<<<< HEAD
 h1 {
   font-size: 3.2em;
   line-height: 1.1;
@@ -65,4 +81,9 @@ button:focus-visible {
   button {
     background-color: #f9f9f9;
   }
+=======
+#root {
+  width: 100%;
+  height: 100vh;
+>>>>>>> 3ade95e3b9400a2d0d2057a796e69cb67c65e250
 }
