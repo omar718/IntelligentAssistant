@@ -1,0 +1,13 @@
+POST /api/projects:
+  body:
+    source:
+      type: "git | local"
+      url: "string"      # if git
+      path: "string"     # if local (from VS Code extension)
+
+  response:
+    project_id: string
+    status: "queued"
+    task_id: string
+    detected_type: string   # "nodejs", "python", etc.
+    detected_pm: string     # "npm", "pip", etc.
