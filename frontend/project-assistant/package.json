@@ -1,21 +1,54 @@
 {
   "name": "project-assistant",
   "displayName": "project-assistant",
-  "description": "Intelligent Assistant for installing and launching web projects",
+  "description": "AI-powered assistant for automatic project onboarding, setup, and configuration",
   "version": "0.0.1",
+  "publisher": "Balitzy",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Aziz-Ban/project-assistant.git"
+  },
   "engines": {
-    "vscode": "^1.109.0"
+    "vscode": "^1.90.0"
   },
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "project-assistant.helloWorld",
-        "title": "Hello World"
+        "command": "project-assistant.openAssistant",
+        "title": "Open Project Assistant"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "project-assistant-sidebar",
+          "title": "Project Assistant",
+          "icon": "$(flame)"
+        }
+      ]
+    },
+    "views": {
+      "project-assistant-sidebar": [
+        {
+          "type": "webview",
+          "id": "project-assistant.assistant",
+          "name": "Project Assistant"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "project-assistant.openAssistant",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l"
       }
     ]
   },
@@ -28,19 +61,24 @@
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
-    "@types/vscode": "^1.109.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "typescript-eslint": "^8.54.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
     "eslint": "^9.39.2",
-    "typescript": "^5.9.3",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.4",
+    "prettier": "^3.7.4",
+    "typescript": "^5.4.2",
+    "typescript-eslint": "^8.54.0",
     "ts-loader": "^9.5.4",
     "webpack": "^5.104.1",
-    "webpack-cli": "^6.0.1",
-    "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2"
+    "webpack-cli": "^6.0.1"
   }
 }
