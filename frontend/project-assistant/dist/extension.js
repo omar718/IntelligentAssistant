@@ -42,9 +42,10 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(__webpack_require__(1));
-const chatViewProvider_1 = __webpack_require__(2);
-const server_1 = __webpack_require__(5);
-const llmService_1 = __webpack_require__(4);
+const os = __importStar(__webpack_require__(2));
+const chatViewProvider_1 = __webpack_require__(3);
+const server_1 = __webpack_require__(6);
+const llmService_1 = __webpack_require__(5);
 function activate(context) {
     vscode.window.showInformationMessage('Project Assistant activated');
     const outputChannel = vscode.window.createOutputChannel('Project Assistant API');
@@ -70,6 +71,34 @@ function activate(context) {
         showApiInfo(port || 6009);
     }));
     (0, llmService_1.getAvailableModels)().catch(console.error);
+    // Register the open-folder handler — opens a path in a new VS Code window
+    (0, server_1.registerOpenFolderCallback)((folderPath) => {
+        const uri = vscode.Uri.file(folderPath);
+        vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
+    });
+    // Register the pick-folder handler — opens native folder picker dialog
+    (0, server_1.registerPickFolderCallback)(async () => {
+        const uris = await vscode.window.showOpenDialog({
+            canSelectFiles: false,
+            canSelectFolders: true,
+            canSelectMany: false,
+            openLabel: 'Select clone destination',
+            title: 'Where should the repository be cloned?',
+            defaultUri: vscode.Uri.file(os.homedir()),
+        });
+        if (uris && uris.length > 0) {
+            return uris[0].fsPath;
+        }
+        return null;
+    });
+    // Auto-start the server on activation
+    (0, server_1.startServer)(6009).then((port) => {
+        outputChannel.appendLine(`Project Assistant server auto-started on port ${port}`);
+    }).catch((err) => {
+        if (!err.message.includes('already running')) {
+            vscode.window.showWarningMessage(`Project Assistant: server could not start — ${err.message}`);
+        }
+    });
     context.subscriptions.push(vscode.commands.registerCommand('project-assistant.startServer', async (port, modelId) => {
         try {
             const actualPort = await (0, server_1.startServer)(port, modelId);
@@ -113,10 +142,9 @@ function activate(context) {
             retainContextWhenHidden: true,
         },
     }));
-    const disposable = vscode.commands.registerCommand('project-assistant.openAssistant', () => {
+    context.subscriptions.push(vscode.commands.registerCommand('project-assistant.openAssistant', () => {
         vscode.commands.executeCommand('workbench.view.extension.project-assistant-sidebar');
-    });
-    context.subscriptions.push(disposable);
+    }));
 }
 function deactivate() {
     return (0, server_1.stopServer)();
@@ -131,12 +159,18 @@ module.exports = require("vscode");
 
 /***/ }),
 /* 2 */
+/***/ ((module) => {
+
+module.exports = require("os");
+
+/***/ }),
+/* 3 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ChatViewProvider = void 0;
-const promptRefiner_1 = __webpack_require__(3);
+const promptRefiner_1 = __webpack_require__(4);
 class ChatViewProvider {
     _extensionUri;
     static viewType = 'project-assistant.assistant';
@@ -920,7 +954,7 @@ exports.ChatViewProvider = ChatViewProvider;
 
 
 /***/ }),
-/* 3 */
+/* 4 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -960,7 +994,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.refinePrompt = refinePrompt;
 const vscode = __importStar(__webpack_require__(1));
-const llmService_1 = __webpack_require__(4);
+const llmService_1 = __webpack_require__(5);
 async function refinePrompt(history, modelId, systemPrompt) {
     try {
         const targetModel = await (0, llmService_1.selectModel)(modelId);
@@ -1006,7 +1040,7 @@ async function refineWithModel(model, history, customSystemPrompt) {
 
 
 /***/ }),
-/* 4 */
+/* 5 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -1113,7 +1147,7 @@ async function sendChatRequest(history, modelId, systemPrompt) {
 
 
 /***/ }),
-/* 5 */
+/* 6 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -1151,12 +1185,22 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerOpenFolderCallback = registerOpenFolderCallback;
+exports.registerPickFolderCallback = registerPickFolderCallback;
 exports.isServerRunning = isServerRunning;
 exports.startServer = startServer;
 exports.stopServer = stopServer;
-const http = __importStar(__webpack_require__(6));
-const llmService_1 = __webpack_require__(4);
+const http = __importStar(__webpack_require__(7));
+const llmService_1 = __webpack_require__(5);
 let server = null;
+let _openFolderCallback = null;
+let _pickFolderCallback = null;
+function registerOpenFolderCallback(cb) {
+    _openFolderCallback = cb;
+}
+function registerPickFolderCallback(cb) {
+    _pickFolderCallback = cb;
+}
 function isServerRunning() {
     return server !== null && server !== undefined;
 }
@@ -1173,14 +1217,69 @@ function startServer(port = 6009, modelId) {
         }
         server = http.createServer(async (req, res) => {
             res.setHeader('Access-Control-Allow-Origin', '*');
-            res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
             res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
             if (req.method === 'OPTIONS') {
                 res.writeHead(204);
                 res.end();
                 return;
             }
-            if (req.method === 'POST' && req.url === '/Mobelite/chat') {
+            if (req.method === 'GET' && req.url === '/pick-folder') {
+                if (!_pickFolderCallback) {
+                    res.writeHead(503, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: 'pick-folder handler not registered' }));
+                    return;
+                }
+                try {
+                    const selectedPath = await _pickFolderCallback();
+                    if (selectedPath) {
+                        res.writeHead(200, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ path: selectedPath }));
+                    }
+                    else {
+                        // User cancelled the dialog
+                        res.writeHead(204);
+                        res.end();
+                    }
+                }
+                catch (error) {
+                    const err = error;
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: err.message }));
+                }
+            }
+            else if (req.method === 'POST' && req.url === '/open-folder') {
+                let body = '';
+                req.on('data', (chunk) => {
+                    body += chunk.toString();
+                });
+                req.on('end', () => {
+                    try {
+                        const data = JSON.parse(body);
+                        const folderPath = data.path;
+                        if (!folderPath) {
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: 'Missing "path" in request body.' }));
+                            return;
+                        }
+                        if (_openFolderCallback) {
+                            _openFolderCallback(folderPath);
+                            res.writeHead(200, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ success: true }));
+                        }
+                        else {
+                            res.writeHead(503, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: 'open-folder handler not registered' }));
+                        }
+                    }
+                    catch (error) {
+                        const err = error;
+                        res.writeHead(500, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: err.message }));
+                    }
+                });
+            }
+            else if (req.method === 'POST' && req.url === '/Mobelite/chat') {
                 let body = '';
                 req.on('data', (chunk) => {
                     body += chunk.toString();
@@ -1263,7 +1362,7 @@ function stopServer() {
 
 
 /***/ }),
-/* 6 */
+/* 7 */
 /***/ ((module) => {
 
 module.exports = require("http");

@@ -24,6 +24,13 @@ services:
       - redis
     env_file:
       - ./backend/.env
+    volumes:
+      - C:/tmp/intelligent-assistant:/tmp/intelligent-assistant
+      - C:/Users:/hostusers
+    environment:
+      HOST_CLONE_BASE_DIR: C:/tmp/intelligent-assistant
+      HOST_USERS_DIR: C:/Users
+      CONTAINER_USERS_DIR: /hostusers
 
   celery:
     build: ./backend
@@ -33,6 +40,13 @@ services:
       - redis
     env_file:
       - ./backend/.env
+    volumes:
+      - C:/tmp/intelligent-assistant:/tmp/intelligent-assistant
+      - C:/Users:/hostusers
+    environment:
+      HOST_CLONE_BASE_DIR: C:/tmp/intelligent-assistant
+      HOST_USERS_DIR: C:/Users
+      CONTAINER_USERS_DIR: /hostusers
 
   pgadmin:
     image: dpage/pgadmin4

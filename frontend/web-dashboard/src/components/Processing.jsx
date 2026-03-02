@@ -1,46 +1,68 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { projectsApi } from '../api/client'
 import '../styles/Processing.css'
 
-function Processing({ gitUrl, onBack }) {
+function Processing({ gitUrl, cloneDir, onBack }) {
   const [progress, setProgress] = useState(0)
   const [step, setStep] = useState(0)
   const [completed, setCompleted] = useState(false)
+  const [error, setError] = useState(null)
+  const called = useRef(false)
 
   const steps = [
-    'Cloning...',
-    'Preparing...',
-    'Starting...'
+    'Cloning repository...',
+    'Analyzing project...',
+    'Launching VS Code...',
   ]
 
   useEffect(() => {
-    if (progress >= 100) {
-      setCompleted(true)
-      // Simulate opening VS Code after completion
-      setTimeout(() => {
-        // In a real application, you would use electron or a backend API
-        // to open VS Code with the project
-        window.open('vscode://file/path/to/project', '_blank')
-        onBack()
-      }, 2000)
-      return
-    }
+    if (called.current) return
+    called.current = true
 
+    // Animate progress while the API request is in flight.
+    // Cap at 90 % so the bar only hits 100 % on real success.
     const interval = setInterval(() => {
       setProgress(prev => {
-        const next = prev + Math.random() * 30
-        if (next >= 100) {
-          setStep(steps.length - 1)
-          return 100
-        }
-        // Update step based on progress
-        const newStep = Math.floor((next / 100) * steps.length)
-        setStep(Math.min(newStep, steps.length - 1))
-        return next
+        if (prev >= 90) return prev
+        const next = prev + Math.random() * 8
+        const capped = Math.min(next, 90)
+        const newStep = Math.min(Math.floor((capped / 100) * steps.length), steps.length - 2)
+        setStep(newStep)
+        return capped
       })
-    }, 800)
+    }, 600)
+
+    projectsApi
+      .create({ source: { type: 'git', url: gitUrl, clone_dir: cloneDir || undefined } })
+      .then(result => {
+        clearInterval(interval)
+        setStep(steps.length - 1)
+        setProgress(100)
+        setCompleted(true)
+        // Open the cloned project in a new VS Code window.
+        // Primary: ask the VS Code extension's local server to open the folder —
+        // this uses the real extension API which supports forceNewWindow.
+        // Fallback: vscode://file/ URI (opens in the current window).
+        if (result.host_path) {
+          const normalizedPath = result.host_path.replace(/\\/g, '/')
+          fetch('http://localhost:6009/open-folder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: result.host_path }),
+          }).catch(() => {
+            // Extension server not running — fall back to URI scheme
+            window.location.href = `vscode://file/${normalizedPath}`
+          })
+        }
+        setTimeout(onBack, 2500)
+      })
+      .catch(err => {
+        clearInterval(interval)
+        setError(err?.response?.data?.detail || err.message || 'Something went wrong.')
+      })
 
     return () => clearInterval(interval)
-  }, [progress, onBack])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="processing-container">
@@ -68,7 +90,7 @@ function Processing({ gitUrl, onBack }) {
 
       <main className="processing-main">
         <div className="processing-box">
-          <h1 className="processing-title">Launching VS Code</h1>
+          <h1 className="processing-title">Getting everything ready...</h1>
           <p className="processing-repo">{gitUrl}</p>
 
           <div className="processing-steps">
@@ -98,8 +120,15 @@ function Processing({ gitUrl, onBack }) {
 
           {completed && (
             <p className="completion-text">
-              Opening in VS Code...
+              Opening in VS code...
             </p>
+          )}
+
+          {error && (
+            <div className="error-text">
+              <p>Error: {error}</p>
+              <button onClick={onBack}>Go back</button>
+            </div>
           )}
         </div>
       </main>
