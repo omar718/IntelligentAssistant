@@ -9,42 +9,26 @@ import Signup from './components/Signup'
 function App() {
   const [currentPage, setCurrentPage] = useState('home') // 'home' | 'processing' | 'projects' | 'login' | 'signup'
   const [gitUrl, setGitUrl] = useState('')
-  const [showVSCodeModal, setShowVSCodeModal] = useState(false)
+  const [cloneDir, setCloneDir] = useState('')
 
-  const handleAnalyze = (url) => {
+  const handleAnalyze = (url, dir) => {
     setGitUrl(url)
+    setCloneDir(dir)
     setCurrentPage('processing')
   }
 
   const handleBack = () => {
     setCurrentPage('home')
     setGitUrl('')
+    setCloneDir('')
   }
 
   return (
     <>
-      {currentPage === 'home' && (
-        <CodeStart onAnalyze={handleAnalyze} onNavigate={setCurrentPage} />
-      )}
-      {currentPage === 'processing' && (
-        <Processing
-          gitUrl={gitUrl}
-          onBack={handleBack}
-          onVSCodeNotFound={() => setShowVSCodeModal(true)}
-        />
-      )}
-      {currentPage === 'projects' && (
-        <ProjectsList onBack={() => setCurrentPage('home')} />
-      )}
-      {currentPage === 'login' && (
-        <Login onNavigate={setCurrentPage} />
-      )}
-      {currentPage === 'signup' && (
-        <Signup onNavigate={setCurrentPage} />
-      )}
-
-      {showVSCodeModal && (
-        <VSCodeModal onClose={() => setShowVSCodeModal(false)} />
+      {currentPage === 'home' ? (
+        <CodeStart onAnalyze={handleAnalyze} />
+      ) : (
+        <Processing gitUrl={gitUrl} cloneDir={cloneDir} onBack={handleBack} />
       )}
     </>
   )

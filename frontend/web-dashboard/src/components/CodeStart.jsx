@@ -3,7 +3,6 @@ import '../styles/CodeStart.css'
 
 function CodeStart({ onAnalyze, onNavigate }) {
   const [gitUrl, setGitUrl] = useState('')
-  const [dragActive, setDragActive] = useState(false)
   const [error, setError] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [showLoginOverlay, setShowLoginOverlay] = useState(false)
@@ -33,24 +32,24 @@ function CodeStart({ onAnalyze, onNavigate }) {
       setError('')
       setShowLoginOverlay(true)
     }
-  }
-
-  const handleDrag = (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true)
-    } else if (e.type === 'dragleave') {
-      setDragActive(false)
+    setError('')
+    setPicking(true)
+    try {
+      const res = await fetch('http://localhost:6009/pick-folder')
+      if (res.status === 204) {
+        // User cancelled the picker
+        setPicking(false)
+        return
+      }
+      const data = await res.json()
+      setPicking(false)
+      onAnalyze(gitUrl, data.path || undefined)
+    } catch {
+      setPicking(false)
+      setError(
+        'Could not open folder picker — make sure the VS Code extension is running (press F5 in VS Code), then try again.'
+      )
     }
-  }
-
-  const handleDrop = (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragActive(false)
-    console.log('Files dropped:', e.dataTransfer.files)
-    // Add your logic here
   }
 
   return (
@@ -147,8 +146,8 @@ function CodeStart({ onAnalyze, onNavigate }) {
               />
             </div>
             {error && <p className="error-message">{error}</p>}
-            <button className="analyze-button" onClick={handleAnalyze}>
-              Launch
+            <button className="analyze-button" onClick={handleAnalyze} disabled={picking}>
+              {picking ? 'Waiting for folder selection...' : 'Launch'}
             </button>
           </div>
 
