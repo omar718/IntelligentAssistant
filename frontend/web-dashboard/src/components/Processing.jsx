@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import '../styles/Processing.css'
 
-function Processing({ gitUrl, onBack }) {
+function Processing({ gitUrl, onBack, onVSCodeNotFound }) {
   const [progress, setProgress] = useState(0)
   const [step, setStep] = useState(0)
   const [completed, setCompleted] = useState(false)
@@ -17,9 +17,15 @@ function Processing({ gitUrl, onBack }) {
       setCompleted(true)
       // Simulate opening VS Code after completion
       setTimeout(() => {
-        // In a real application, you would use electron or a backend API
-        // to open VS Code with the project
-        window.open('vscode://file/path/to/project', '_blank')
+        const vsCodeUrl = 'vscode://file/path/to/project'
+        const start = Date.now()
+        window.location.href = vsCodeUrl
+        // If VS Code doesn't handle the protocol within 1.5s, it's likely not installed
+        setTimeout(() => {
+          if (Date.now() - start < 2000 && document.visibilityState !== 'hidden') {
+            onVSCodeNotFound && onVSCodeNotFound()
+          }
+        }, 1500)
         onBack()
       }, 2000)
       return
