@@ -7,11 +7,12 @@ import VSCodeModal from './components/VSCodeModal'
 function App() {
   const [currentPage, setCurrentPage] = useState('home') // 'home' | 'processing' | 'projects'
   const [gitUrl, setGitUrl] = useState('')
+  const [cloneDir, setCloneDir] = useState('')
   const [showVSCodeModal, setShowVSCodeModal] = useState(false)
 
   const handleAnalyze = (url, dir) => {
     setGitUrl(url)
-    setCloneDir(dir)
+    setCloneDir(dir || '')
     setCurrentPage('processing')
   }
 
@@ -29,6 +30,7 @@ function App() {
       {currentPage === 'processing' && (
         <Processing
           gitUrl={gitUrl}
+          cloneDir={cloneDir}
           onBack={handleBack}
           onVSCodeNotFound={() => setShowVSCodeModal(true)}
         />

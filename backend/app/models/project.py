@@ -17,7 +17,7 @@ class Project(Base):
  
     id         = Column(String(50), primary_key=True)
     name       = Column(String(255), nullable=False)
-    user_id    = Column(String(50), ForeignKey('users.id'), nullable=False)  # ForeignKey to users.id
+    user_id    = Column(String(50), ForeignKey('users.id'), nullable=True)   # nullable until auth is implemented
     type       = Column(String(50))        # nodejs, python, php ...
     path       = Column(String, nullable=False)
     status     = Column(SAEnum(ProjectStatus, name='projectstatus'), default=ProjectStatus.queued)
