@@ -1,15 +1,35 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import '../styles/CodeStart.css'
 
-function CodeStart({ onAnalyze }) {
+function CodeStart({ onAnalyze, onNavigate }) {
   const [gitUrl, setGitUrl] = useState('')
   const [error, setError] = useState('')
-  const [picking, setPicking] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef(null)
 
-  const handleAnalyze = async () => {
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const isValidGitHubUrl = (url) => {
+    const githubPattern = /^https?:\/\/(www\.)?github\.com\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+(\.git)?\/?$/
+    return githubPattern.test(url.trim())
+  }
+
+  const handleAnalyze = () => {
     if (!gitUrl.trim()) {
-      setError('please paste the URL from your GIT repository!')
-      return
+      setError('Please paste a GitHub repository URL.')
+    } else if (!isValidGitHubUrl(gitUrl)) {
+      setError('Invalid URL. Please enter a valid GitHub repository URL (e.g. https://github.com/username/repo).')
+    } else {
+      setError('')
+      onAnalyze(gitUrl)
     }
     setError('')
     setPicking(true)
@@ -34,6 +54,39 @@ function CodeStart({ onAnalyze }) {
   return (
     <div className="codestart-container">
       <header className="codestart-header">
+        {/* User account dropdown – top left */}
+        <div className="account-menu" ref={menuRef}>
+          <button
+            className="account-avatar-button"
+            onClick={() => setMenuOpen((prev) => !prev)}
+            title="Account"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" className="avatar-icon">
+              <path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/>
+            </svg>
+            <svg viewBox="0 0 24 24" fill="currentColor" className={`chevron-icon ${menuOpen ? 'open' : ''}`}>
+              <path d="M7 10l5 5 5-5z"/>
+            </svg>
+          </button>
+
+          {menuOpen && (
+            <div className="account-dropdown">
+              <button className="dropdown-item" onClick={() => setMenuOpen(false)}>
+                <svg viewBox="0 0 24 24" fill="currentColor" className="dropdown-icon">
+                  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                </svg>
+                Launch new project
+              </button>
+              <button className="dropdown-item" onClick={() => { setMenuOpen(false); onNavigate('projects') }}>
+                <svg viewBox="0 0 24 24" fill="currentColor" className="dropdown-icon">
+                  <path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/>
+                </svg>
+                Projects list
+              </button>
+            </div>
+          )}
+        </div>
+
         <div className="logo">
           <svg className="logo-icon-svg" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
             <circle cx="50" cy="50" r="48" fill="none" stroke="#fff" strokeWidth="2"/>

@@ -1,0 +1,356 @@
+.projects-container {
+  width: 100%;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #5c6781 0%, #1a2547 50%, #0f1729 100%);
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+}
+
+/* Header */
+.projects-header {
+  padding: 0 2rem;
+  width: 100%;
+  height: 75px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  position: relative;
+  box-sizing: border-box;
+}
+
+.back-button {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  padding: 0.45rem 0.85rem;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  z-index: 1;
+}
+
+.back-button:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(100, 180, 255, 0.4);
+  color: #fff;
+}
+
+.back-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.projects-logo {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+}
+
+.projects-logo .logo-icon-svg {
+  width: 45px;
+  height: 45px;
+}
+
+/* Main */
+.projects-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 3rem 2rem 4rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.projects-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 0.4rem;
+}
+
+.projects-title {
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+  font-weight: 800;
+  color: #fff;
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.projects-count {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.4);
+  font-weight: 400;
+}
+
+.projects-subtitle {
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.55);
+  margin: 0 0 2.5rem 0;
+  font-weight: 300;
+}
+
+/* Empty state */
+.projects-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 2rem;
+  padding: 3rem 4rem;
+  background: rgba(30, 50, 90, 0.4);
+  border: 1px dashed rgba(100, 150, 200, 0.3);
+  border-radius: 16px;
+}
+
+.empty-icon {
+  width: 56px;
+  height: 56px;
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.empty-label {
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.35);
+  margin: 0;
+  font-weight: 400;
+}
+
+/* ── Project list ── */
+.projects-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+  max-width: 860px;
+}
+
+/* ── Project card ── */
+.project-card {
+  background: rgba(20, 38, 75, 0.65);
+  border: 1px solid rgba(100, 150, 200, 0.18);
+  border-radius: 14px;
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  backdrop-filter: blur(10px);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.project-card:hover,
+.project-card--open {
+  border-color: rgba(100, 160, 255, 0.35);
+  background: rgba(20, 38, 75, 0.85);
+}
+
+/* top row */
+.project-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.project-card-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.project-card-name {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.project-card-gh-icon {
+  width: 16px;
+  height: 16px;
+  color: rgba(255, 255, 255, 0.6);
+  flex-shrink: 0;
+}
+
+.project-card-url {
+  font-size: 0.78rem;
+  color: rgba(100, 170, 255, 0.75);
+  text-decoration: none;
+  transition: color 0.2s;
+  font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.project-card-url:hover {
+  color: rgba(100, 170, 255, 1);
+  text-decoration: underline;
+}
+
+.project-card-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.55rem;
+}
+
+.project-card-date {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.date-clock-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.project-card-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* action buttons */
+.project-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.38rem 0.85rem;
+  border-radius: 7px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+  border: 1px solid transparent;
+}
+
+.download-btn {
+  background: rgba(74, 123, 167, 0.2);
+  border-color: rgba(74, 123, 167, 0.4);
+  color: rgba(140, 195, 255, 0.9);
+}
+
+.download-btn:hover {
+  background: rgba(74, 123, 167, 0.35);
+  border-color: rgba(74, 123, 167, 0.7);
+  color: #fff;
+}
+
+.download-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.more-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.more-btn:hover,
+.more-btn--active {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.more-chevron {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.2s ease;
+}
+
+.more-chevron.open {
+  transform: rotate(180deg);
+}
+
+.delete-btn {
+  background: rgba(180, 40, 40, 0.12);
+  border-color: rgba(180, 40, 40, 0.3);
+  color: rgba(255, 110, 110, 0.85);
+  padding: 0.38rem 0.55rem;
+}
+
+.delete-btn:hover {
+  background: rgba(200, 40, 40, 0.28);
+  border-color: rgba(220, 60, 60, 0.6);
+  color: #ff8080;
+}
+
+.delete-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* badge strip */
+.project-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+/* ── More info panel ── */
+.project-more-info {
+  border-top: 1px solid rgba(100, 150, 200, 0.15);
+  padding-top: 1rem;
+  animation: panelIn 0.18s ease;
+}
+
+@keyframes panelIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.more-info-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.more-info-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.more-info-label {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.45);
+  min-width: 130px;
+  font-weight: 500;
+}
+
+.more-info-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.more-info-pending {
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.35);
+  margin: 0;
+  font-style: italic;
+}
+
+/* ── Responsive ── */
+@media (max-width: 600px) {
+  .project-card-top { flex-direction: column; }
+  .project-card-right { align-items: flex-start; }
+  .more-info-label { min-width: 100px; }
+}
