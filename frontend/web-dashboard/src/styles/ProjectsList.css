@@ -348,6 +348,58 @@
   font-style: italic;
 }
 
+/* ── Delete Inline Confirmation ── */
+.delete-confirm-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  animation: confirmFadeIn 0.2s ease;
+}
+
+@keyframes confirmFadeIn {
+  from { opacity: 0; transform: translateX(6px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.delete-confirm-text {
+  font-size: 0.8rem;
+  color: rgba(255, 150, 150, 0.9);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.delete-confirm-btn {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.delete-confirm-btn.cancel {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.delete-confirm-btn.cancel:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.delete-confirm-btn.confirm {
+  background: rgba(192, 57, 43, 0.85);
+  border: 1px solid rgba(192, 57, 43, 0.6);
+  color: #fff;
+}
+
+.delete-confirm-btn.confirm:hover {
+  background: rgba(211, 70, 55, 1);
+  box-shadow: 0 2px 10px rgba(192, 57, 43, 0.35);
+}
+
 /* ── Responsive ── */
 @media (max-width: 600px) {
   .project-card-top { flex-direction: column; }

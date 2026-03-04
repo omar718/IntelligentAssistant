@@ -80,6 +80,7 @@ function handleDownload(project) {
 // ── Project card ───────────────────────────────────────────────────────────────
 function ProjectCard({ project, onDelete }) {
   const [open, setOpen] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
 
   const allTechs = [
     project.detected_type,
@@ -134,12 +135,29 @@ function ProjectCard({ project, onDelete }) {
             <button
               className="project-action-btn delete-btn"
               title="Delete project"
-              onClick={() => onDelete(project.id)}
+              onClick={() => setShowConfirm(true)}
             >
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
               </svg>
             </button>
+            {showConfirm && (
+              <div className="delete-confirm-inline">
+                <span className="delete-confirm-text">Delete?</span>
+                <button
+                  className="delete-confirm-btn cancel"
+                  onClick={() => setShowConfirm(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="delete-confirm-btn confirm"
+                  onClick={() => { setShowConfirm(false); onDelete(project.id) }}
+                >
+                  Delete
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

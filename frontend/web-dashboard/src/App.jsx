@@ -3,9 +3,11 @@ import CodeStart from './components/CodeStart'
 import Processing from './components/Processing'
 import ProjectsList from './components/ProjectsList'
 import VSCodeModal from './components/VSCodeModal'
+import Login from './components/Login'
+import Signup from './components/Signup'
 
 function App() {
-  const [currentPage, setCurrentPage] = useState('home') // 'home' | 'processing' | 'projects'
+  const [currentPage, setCurrentPage] = useState('home') // 'home' | 'processing' | 'projects' | 'login' | 'signup'
   const [gitUrl, setGitUrl] = useState('')
   const [showVSCodeModal, setShowVSCodeModal] = useState(false)
 
@@ -33,6 +35,12 @@ function App() {
       )}
       {currentPage === 'projects' && (
         <ProjectsList onBack={() => setCurrentPage('home')} />
+      )}
+      {currentPage === 'login' && (
+        <Login onNavigate={setCurrentPage} />
+      )}
+      {currentPage === 'signup' && (
+        <Signup onNavigate={setCurrentPage} />
       )}
 
       {showVSCodeModal && (

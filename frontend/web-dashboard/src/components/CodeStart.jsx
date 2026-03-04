@@ -6,6 +6,7 @@ function CodeStart({ onAnalyze, onNavigate }) {
   const [dragActive, setDragActive] = useState(false)
   const [error, setError] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [showLoginOverlay, setShowLoginOverlay] = useState(false)
   const menuRef = useRef(null)
 
   useEffect(() => {
@@ -30,7 +31,7 @@ function CodeStart({ onAnalyze, onNavigate }) {
       setError('Invalid URL. Please enter a valid GitHub repository URL (e.g. https://github.com/username/repo).')
     } else {
       setError('')
-      onAnalyze(gitUrl)
+      setShowLoginOverlay(true)
     }
   }
 
@@ -155,6 +156,33 @@ function CodeStart({ onAnalyze, onNavigate }) {
           
         </div>
       </main>
+
+      {/* Login Overlay */}
+      {showLoginOverlay && (
+        <div className="login-overlay" onClick={() => setShowLoginOverlay(false)}>
+          <div className="login-overlay-card" onClick={(e) => e.stopPropagation()}>
+            <button className="login-overlay-close" onClick={() => setShowLoginOverlay(false)}>
+              &times;
+            </button>
+            <h2 className="login-overlay-title">Welcome!</h2>
+            <p className="login-overlay-message">
+              Welcome to your favourite web project launcher, for the best experience please login to your account
+            </p>
+            <button className="login-overlay-button" onClick={() => onNavigate('login')}>
+              Login
+            </button>
+            <p className="login-overlay-signup-text">
+              You still don't have an account?{' '}
+              <span
+                className="login-overlay-signup-link"
+                onClick={() => onNavigate('signup')}
+              >
+                Signup
+              </span>
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
