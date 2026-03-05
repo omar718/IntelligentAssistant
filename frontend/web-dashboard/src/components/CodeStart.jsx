@@ -162,7 +162,7 @@ function CodeStart({ onAnalyze, onNavigate }) {
         <Signup onClose={() => setShowSignup(false)} onNavigate={onNavigate} />
       )}
 
-      {/* Login Overlay */}}
+      {/* Login Overlay */}
       {showLoginOverlay && (
         <div className="login-overlay" onClick={() => setShowLoginOverlay(false)}>
           <div className="login-overlay-card" onClick={(e) => e.stopPropagation()}>
