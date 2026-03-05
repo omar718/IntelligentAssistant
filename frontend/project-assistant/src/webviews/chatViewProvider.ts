@@ -268,6 +268,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     color: var(--vscode-descriptionForeground);
                 }
 
+                .or-drop-label {
+                    font-size: 12px;
+                    color: var(--vscode-descriptionForeground);
+                    text-align: center;
+                    margin: 6px 0;
+                    opacity: 0.7;
+                }
+
                 #steps-file-input {
                     display: none;
                 }
@@ -311,6 +319,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 }
 
                 .analyse-btn:active {
+                    transform: scale(0.98);
+                }
+
+                .analyse-file-btn {
+                    width: 100%;
+                    margin-top: 10px;
+                    padding: 8px;
+                    border: 1px solid var(--primary-color);
+                    border-radius: 6px;
+                    background: transparent;
+                    color: var(--primary-color);
+                    font-weight: 600;
+                    font-size: 13px;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+
+                .analyse-file-btn:hover {
+                    background: rgba(0, 132, 255, 0.1);
+                    box-shadow: 0 2px 6px rgba(0, 132, 255, 0.2);
+                }
+
+                .analyse-file-btn:active {
                     transform: scale(0.98);
                 }
 
@@ -377,14 +408,116 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     border-radius: 12px;
                 }
 
+                .message-time {
+                    font-size: 10px;
+                    color: var(--vscode-descriptionForeground);
+                    opacity: 0.6;
+                    margin-top: 3px;
+                    padding: 0 4px;
+                }
+
+                /* ── History drawer ── */
+                .history-drawer {
+                    display: none;
+                    flex-direction: column;
+                    background: var(--vscode-sideBar-background);
+                    border-top: 1px solid var(--vscode-panel-border);
+                    flex-shrink: 0;
+                    max-height: 240px;
+                    overflow-y: auto;
+                }
+
+                .history-drawer.open {
+                    display: flex;
+                }
+
+                .history-header {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    padding: 8px 14px;
+                    font-size: 11px;
+                    font-weight: 600;
+                    text-transform: uppercase;
+                    letter-spacing: 0.06em;
+                    color: var(--vscode-descriptionForeground);
+                    border-bottom: 1px solid var(--vscode-panel-border);
+                    flex-shrink: 0;
+                }
+
+                .history-clear-btn {
+                    background: none;
+                    border: none;
+                    color: var(--vscode-descriptionForeground);
+                    font-size: 11px;
+                    cursor: pointer;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                    transition: background 0.15s;
+                }
+                .history-clear-btn:hover { background: rgba(248,81,73,0.12); color: var(--danger-color); }
+
+                .history-empty {
+                    padding: 20px;
+                    text-align: center;
+                    font-size: 12px;
+                    color: var(--vscode-descriptionForeground);
+                    opacity: 0.6;
+                }
+
+                .history-item {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 10px;
+                    padding: 10px 14px;
+                    border-bottom: 1px solid var(--vscode-panel-border);
+                    cursor: pointer;
+                    transition: background 0.15s;
+                }
+                .history-item:last-child { border-bottom: none; }
+                .history-item:hover { background: rgba(128,128,128,0.08); }
+
+                .history-item-icon {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 50%;
+                    background: rgba(0,132,255,0.12);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    flex-shrink: 0;
+                    margin-top: 1px;
+                }
+                .history-item-icon svg { width: 14px; height: 14px; fill: var(--primary-color); }
+
+                .history-item-body { flex: 1; min-width: 0; }
+
+                .history-item-preview {
+                    font-size: 12px;
+                    font-weight: 500;
+                    color: var(--vscode-foreground);
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+
+                .history-item-meta {
+                    font-size: 11px;
+                    color: var(--vscode-descriptionForeground);
+                    margin-top: 2px;
+                }
+
                 .input-container {
                     padding: 16px 20px;
                     background: var(--vscode-editor-background);
                     flex-shrink: 0;
+                    min-width: 0;
+                    overflow: hidden;
                 }
 
                 .chat-input-wrapper {
                     flex: 1;
+                    min-width: 0;
                     background: var(--input-bg);
                     border: 1px solid var(--vscode-input-border);
                     border-radius: 24px;
@@ -393,6 +526,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     align-items: center;
                     transition: all 0.2s;
                     box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+                    overflow: hidden;
                 }
                 .chat-input-wrapper:focus-within {
                     border-color: var(--primary-color);
@@ -401,12 +535,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
                 .chat-input {
                     flex: 1;
+                    min-width: 0;
                     background: transparent;
                     border: none;
                     color: var(--input-fg);
                     font-size: 14px;
                     padding: 0;
                     outline: none;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
                 }
 
                 .send-icon-btn {
@@ -514,87 +651,191 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 .status-step.pending .status-text {
                     opacity: 0.5;
                 }
+
+                /* ── Tab bar ── */
+                .tab-bar {
+                    display: flex;
+                    background: var(--vscode-sideBar-background);
+                    border-bottom: 1px solid var(--vscode-panel-border);
+                    flex-shrink: 0;
+                }
+
+                .tab-btn {
+                    flex: 1;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 7px;
+                    padding: 10px 8px;
+                    background: none;
+                    border: none;
+                    border-bottom: 2px solid transparent;
+                    color: var(--vscode-descriptionForeground);
+                    font-size: 12px;
+                    font-weight: 500;
+                    font-family: var(--vscode-font-family, inherit);
+                    cursor: pointer;
+                    transition: color 0.15s, border-color 0.15s;
+                    white-space: nowrap;
+                }
+
+                .tab-btn svg {
+                    width: 16px;
+                    height: 16px;
+                    fill: currentColor;
+                    flex-shrink: 0;
+                }
+
+                .tab-btn:hover {
+                    color: var(--vscode-foreground);
+                    background: rgba(128,128,128,0.08);
+                }
+
+                .tab-btn.active {
+                    color: var(--primary-color);
+                    border-bottom-color: var(--primary-color);
+                }
+
+                /* ── Tab panels ── */
+                .tab-panel {
+                    display: none;
+                    flex: 1;
+                    flex-direction: column;
+                    overflow: hidden;
+                    min-height: 0;
+                }
+
+                .tab-panel.active {
+                    display: flex;
+                }
+
+                .analyser-panel-scroll {
+                    overflow-y: auto;
+                    padding: 0;
+                    display: flex;
+                    flex-direction: column;
+                }
             </style>
         </head>
         <body>
-            <header>
-                <div class="header-title">
-                    <svg style="width:20px;height:20px;fill:currentColor;" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-9l-1 1H5v2h14V4z"/></svg>
-                    <span>Project Assistant</span>
-                </div>
-                <div class="header-right">
-                    <button id="new-chat-btn" class="icon-btn" title="New Chat">
-                        <svg viewBox="0 0 24 24"><path d="M14.06 9.02l.92.92L5.92 19H5v-.92l9.06-9.06M17.66 3c-.25 0-.51.1-.7.29l-1.83 1.83 3.75 3.75 1.83-1.83c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.2-.2-.45-.29-.71-.29m-3.6 3.19L3 17.25V21h3.75L17.81 9.94l-3.75-3.75z"/></svg>
-                    </button>
-                </div>
-            </header>
-
-            <div class="file-upload-section">
-                <div>
-                    <h2 class="setup-title">Setup your project with AI</h2>
-                    <p class="setup-description">The intelligent assistant analyses the project</p>
-                </div>
-                <div id="upload-area" class="upload-area">
-                    <svg class="upload-icon" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-                    <div class="upload-text">Drop your steps file here</div>
-                    <div class="upload-hint">or click to select .json or .txt</div>
-                </div>
-                <div id="file-loaded" style="display:none;">
-                    <div class="file-loaded">
-                        <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
-                        <span id="file-name">steps file loaded</span>
-                    </div>
-                    <button id="analyse-btn" class="analyse-btn">🔍 Analyse project</button>
-                </div>
-                <input type="file" id="steps-file-input" accept=".json,.txt" />
+            <!-- Tab bar -->
+            <div class="tab-bar">
+                <button class="tab-btn active" data-tab="analyser">
+                    <svg viewBox="0 0 24 24"><path d="M19.8 18.4L14 10.67V6.5l1.35-1.69c.26-.33.03-.81-.39-.81H9.04c-.42 0-.65.48-.39.81L10 6.5v4.17L4.2 18.4c-.49.66-.02 1.6.8 1.6h14c.82 0 1.29-.94.8-1.6z"/></svg>
+                    Project Analyser
+                </button>
+                <button class="tab-btn" data-tab="chat">
+                    <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/></svg>
+                    Chat
+                </button>
             </div>
 
-            <div id="status-bar" class="status-bar">
-                <div class="status-steps">
-                    <div class="status-step pending" data-step="analysing">
-                        <div class="status-icon">1</div>
-                        <div class="status-text">Analysing</div>
+            <!-- Chat tab -->
+            <div class="tab-panel" id="tab-chat">
+                <div id="history-drawer" class="history-drawer">
+                    <div class="history-header">
+                        <span>Chat History</span>
+                        <button class="history-clear-btn" id="history-clear-btn">Clear all</button>
                     </div>
-                    <div class="status-step pending" data-step="installing">
-                        <div class="status-icon">2</div>
-                        <div class="status-text">Install Dependencies</div>
+                    <div id="history-list"></div>
+                </div>
+                <div id="chat-container">
+                    <div class="message-wrapper assistant">
+                        <div class="message-bubble">How can I assist you today?</div>
                     </div>
-                    <div class="status-step pending" data-step="configuring">
-                        <div class="status-icon">3</div>
-                        <div class="status-text">Configure Environment</div>
+                </div>
+
+                <div class="input-container">
+                    <div class="chat-input-wrapper">
+                        <input type="text" id="prompt-input" class="chat-input" placeholder="Ask about project setup..." autocomplete="off" />
+                        <button id="send-btn" class="send-icon-btn" title="Send">
+                            <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                        </button>
                     </div>
-                    <div class="status-step pending" data-step="running">
-                        <div class="status-icon">4</div>
-                        <div class="status-text">Run Application</div>
+                    <div style="display:flex; justify-content:flex-end; gap:6px; margin-top:6px;">
+                        <button id="history-btn" class="icon-btn" title="Chat History" style="font-size:11px; gap:4px; padding:4px 8px; display:flex; align-items:center;">
+                            <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+                            History
+                        </button>
+                        <button id="new-chat-btn" class="icon-btn" title="New Chat" style="font-size:11px; gap:4px; padding:4px 8px; display:flex; align-items:center;">
+                            <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M14.06 9.02l.92.92L5.92 19H5v-.92l9.06-9.06M17.66 3c-.25 0-.51.1-.7.29l-1.83 1.83 3.75 3.75 1.83-1.83c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.2-.2-.45-.29-.71-.29m-3.6 3.19L3 17.25V21h3.75L17.81 9.94l-3.75-3.75z"/></svg>
+                            New Chat
+                        </button>
                     </div>
                 </div>
             </div>
 
-            <div id="chat-container">
-                <div id="welcome-msg" style="text-align: center; margin-top: 40px; opacity: 0.4; display:flex; flex-direction:column; align-items:center; gap:10px;">
-                    <svg viewBox="0 0 24 24" style="width:48px;height:48px;fill:currentColor;"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2m0 14H6l-2 2V4h16v12z"/></svg>
-                    <span style="font-size:13px; font-weight:500;">Project Assistant</span>
-                </div>
-            </div>
+            <!-- Project Analyser tab -->
+            <div class="tab-panel active" id="tab-analyser">
+                <div class="analyser-panel-scroll">
+                    <div class="file-upload-section">
+                        <div>
+                            <h2 class="setup-title">Start installing your project</h2>
+                            <p class="setup-description">The intelligent assistant analyses the project</p>
+                        </div>
+                        <button id="analyse-btn" class="analyse-btn">Analyse project</button>
+                        <p id="or-drop-label" class="or-drop-label">or manually drop your steps file</p>
+                        <div id="upload-area" class="upload-area">
+                            <svg class="upload-icon" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                            <div class="upload-text">Drop your steps file here</div>
+                            <div class="upload-hint">or click to select .json or .txt</div>
+                        </div>
+                        <div id="file-loaded" style="display:none;">
+                            <div class="file-loaded">
+                                <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+                                <span id="file-name">steps file loaded</span>
+                            </div>
+                            <button id="analyse-file-btn" class="analyse-file-btn">Analyse file</button>
+                        </div>
+                        <input type="file" id="steps-file-input" accept=".json,.txt" />
+                    </div>
 
-            <div class="input-container">
-                <div class="chat-input-wrapper">
-                    <input type="text" id="prompt-input" class="chat-input" placeholder="Ask about project setup..." autocomplete="off" />
-                    <button id="send-btn" class="send-icon-btn" title="Send">
-                        <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
-                    </button>
+                    <div id="status-bar" class="status-bar">
+                        <div class="status-steps">
+                            <div class="status-step pending" data-step="analysing">
+                                <div class="status-icon">1</div>
+                                <div class="status-text">Analysing</div>
+                            </div>
+                            <div class="status-step pending" data-step="installing">
+                                <div class="status-icon">2</div>
+                                <div class="status-text">Install Dependencies</div>
+                            </div>
+                            <div class="status-step pending" data-step="configuring">
+                                <div class="status-icon">3</div>
+                                <div class="status-text">Configure Environment</div>
+                            </div>
+                            <div class="status-step pending" data-step="running">
+                                <div class="status-icon">4</div>
+                                <div class="status-text">Run Application</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <script>
                 const vscode = acquireVsCodeApi();
                 const previousState = vscode.getState() || {};
-                
+
+                // ── Tab switching ──
+                document.querySelectorAll('.tab-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+                        btn.classList.add('active');
+                        document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+                    });
+                });
+
                 const chat = document.getElementById('chat-container');
                 const inp = document.getElementById('prompt-input');
                 const btnSend = document.getElementById('send-btn');
                 const btnNewChat = document.getElementById('new-chat-btn');
-                
+                const btnHistory = document.getElementById('history-btn');
+                const historyDrawer = document.getElementById('history-drawer');
+                const historyList = document.getElementById('history-list');
+                const historyClearBtn = document.getElementById('history-clear-btn');
+
                 const uploadArea = document.getElementById('upload-area');
                 const fileInput = document.getElementById('steps-file-input');
                 const fileLoaded = document.getElementById('file-loaded');
@@ -602,6 +843,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 const statusBar = document.getElementById('status-bar');
 
                 let chatMessages = [];
+                let chatSessions = JSON.parse(vscode.getState()?.chatSessions || '[]');
                 let currentFile = null;
 
                 inp.focus();
@@ -680,6 +922,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     };
                 }
 
+                const analyseFileBtn = document.getElementById('analyse-file-btn');
+                if (analyseFileBtn) {
+                    analyseFileBtn.onclick = () => {
+                        if (currentFile) {
+                            showStatusBar();
+                            addMsg('Analysing file: ' + currentFile.name, 'user');
+                            vscode.postMessage({ type: 'analyseProject', file: currentFile });
+                        }
+                    };
+                }
+
                 function handleFileSelect(file) {
                     if (!file) return;
                     if (!file.name.match(/\\.(json|txt)$/)) {
@@ -703,6 +956,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             vscode.postMessage({ type: 'uploadStepsFile', file: currentFile, projectInfo: projectInfo });
                             
                             uploadArea.style.display = 'none';
+                            document.getElementById('or-drop-label').style.display = 'none';
                             fileLoaded.style.display = 'block';
                             fileName.textContent = file.name;
                         } catch (err) {
@@ -733,21 +987,102 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     chat.scrollTop = chat.scrollHeight;
                 }
 
+                // ── History helpers ──
+                function saveSession() {
+                    if (chatMessages.length === 0) return;
+                    const session = {
+                        id: Date.now(),
+                        messages: [...chatMessages],
+                        preview: chatMessages[0]?.text || 'Chat session',
+                        ts: new Date().toLocaleString()
+                    };
+                    chatSessions.unshift(session);
+                    persistSessions();
+                }
+
+                function persistSessions() {
+                    const state = vscode.getState() || {};
+                    vscode.setState({ ...state, chatSessions: JSON.stringify(chatSessions) });
+                }
+
+                function renderHistoryList() {
+                    historyList.innerHTML = '';
+                    if (chatSessions.length === 0) {
+                        historyList.innerHTML = '<div class="history-empty">No previous chats yet</div>';
+                        return;
+                    }
+                    chatSessions.forEach((session) => {
+                        const item = document.createElement('div');
+                        item.className = 'history-item';
+                        item.innerHTML =
+                            '<div class="history-item-icon"><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/></svg></div>' +
+                            '<div class="history-item-body">' +
+                                '<div class="history-item-preview">' + escapeHtml(session.preview.slice(0, 60)) + '</div>' +
+                                '<div class="history-item-meta">' + session.ts + ' · ' + session.messages.length + ' messages</div>' +
+                            '</div>';
+                        item.onclick = () => restoreSession(session);
+                        historyList.appendChild(item);
+                    });
+                }
+
+                function restoreSession(session) {
+                    chat.innerHTML = '';
+                    chatMessages = [];
+                    session.messages.forEach(msg => {
+                        const wrapper = document.createElement('div');
+                        wrapper.className = 'message-wrapper ' + msg.type;
+                        const bubble = document.createElement('div');
+                        bubble.className = 'message-bubble';
+                        bubble.textContent = msg.text;
+                        wrapper.appendChild(bubble);
+                        if (msg.ts) {
+                            const time = document.createElement('div');
+                            time.className = 'message-time';
+                            time.textContent = msg.ts;
+                            wrapper.appendChild(time);
+                        }
+                        chat.appendChild(wrapper);
+                        chatMessages.push(msg);
+                    });
+                    chat.scrollTop = chat.scrollHeight;
+                    historyDrawer.classList.remove('open');
+                }
+
+                function escapeHtml(str) {
+                    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+                }
+
+                // History toggle
+                btnHistory.onclick = () => {
+                    renderHistoryList();
+                    historyDrawer.classList.toggle('open');
+                };
+
+                historyClearBtn.onclick = () => {
+                    chatSessions = [];
+                    persistSessions();
+                    renderHistoryList();
+                };
+
                 // New Chat
                 btnNewChat.onclick = () => {
-                   chat.innerHTML = '<div id="welcome-msg" style="text-align: center; margin-top: 40px; opacity: 0.4; display:flex; flex-direction:column; align-items:center; gap:10px;">' +
-                        '<svg viewBox="0 0 24 24" style="width:48px;height:48px;fill:currentColor;"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2m0 14H6l-2 2V4h16v12z"/></svg>' +
-                        '<span style="font-size:13px; font-weight:500;">Project Assistant</span>' +
+                    saveSession();
+                    historyDrawer.classList.remove('open');
+                    chat.innerHTML = '<div class="message-wrapper assistant">' +
+                        '<div class="message-bubble">How can I assist you today?</div>' +
                     '</div>';
-                   chatMessages = [];
-                   hideStatusBar();
-                   vscode.setState({ ...vscode.getState(), chatMessages: [] });
-                   vscode.postMessage({ type: 'clearHistory' });
+                    chatMessages = [];
+                    hideStatusBar();
+                    vscode.setState({ ...vscode.getState(), chatMessages: [] });
+                    vscode.postMessage({ type: 'clearHistory' });
                 };
 
                 function addMsg(text, type) {
                     const welcome = document.getElementById('welcome-msg');
                     if (welcome) welcome.remove();
+
+                    const now = new Date();
+                    const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
                     const wrapper = document.createElement('div');
                     wrapper.className = 'message-wrapper ' + type;
@@ -755,12 +1090,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     const bubble = document.createElement('div');
                     bubble.className = 'message-bubble';
                     bubble.textContent = text;
+
+                    const time = document.createElement('div');
+                    time.className = 'message-time';
+                    time.textContent = ts;
                     
                     wrapper.appendChild(bubble);
+                    wrapper.appendChild(time);
                     chat.appendChild(wrapper);
                     chat.scrollTop = chat.scrollHeight;
                     
-                    chatMessages.push({ text, type });
+                    chatMessages.push({ text, type, ts });
                     vscode.setState({ 
                         ...vscode.getState(), 
                         chatMessages: chatMessages 
