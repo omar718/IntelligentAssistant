@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, DateTime, JSON
+from sqlalchemy import Column, String, Integer, DateTime, JSON, ForeignKey
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.sql import func
 from app.models.base import Base
@@ -17,11 +17,12 @@ class Project(Base):
  
     id         = Column(String(50), primary_key=True)
     name       = Column(String(255), nullable=False)
+    user_id    = Column(String(50), ForeignKey('users.id'), nullable=True)   # nullable until auth is implemented
     type       = Column(String(50))        # nodejs, python, php ...
     path       = Column(String, nullable=False)
     status     = Column(SAEnum(ProjectStatus, name='projectstatus'), default=ProjectStatus.queued)
     port       = Column(Integer)
     pid        = Column(Integer)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     metadata_  = Column('metadata', JSON)  # JSONB in Postgres

@@ -9,16 +9,19 @@ import Signup from './components/Signup'
 function App() {
   const [currentPage, setCurrentPage] = useState('home') // 'home' | 'processing' | 'projects' | 'login' | 'signup'
   const [gitUrl, setGitUrl] = useState('')
+  const [cloneDir, setCloneDir] = useState('')
   const [showVSCodeModal, setShowVSCodeModal] = useState(false)
 
-  const handleAnalyze = (url) => {
+  const handleAnalyze = (url, dir) => {
     setGitUrl(url)
+    setCloneDir(dir || '')
     setCurrentPage('processing')
   }
 
   const handleBack = () => {
     setCurrentPage('home')
     setGitUrl('')
+    setCloneDir('')
   }
 
   return (
@@ -29,18 +32,13 @@ function App() {
       {currentPage === 'processing' && (
         <Processing
           gitUrl={gitUrl}
+          cloneDir={cloneDir}
           onBack={handleBack}
           onVSCodeNotFound={() => setShowVSCodeModal(true)}
         />
       )}
       {currentPage === 'projects' && (
         <ProjectsList onBack={() => setCurrentPage('home')} />
-      )}
-      {currentPage === 'login' && (
-        <Login onNavigate={setCurrentPage} />
-      )}
-      {currentPage === 'signup' && (
-        <Signup onNavigate={setCurrentPage} />
       )}
 
       {showVSCodeModal && (

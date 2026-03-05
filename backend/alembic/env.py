@@ -3,6 +3,10 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 from app.models import Base
 import os
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(__file__), '../.env'))
+load_dotenv(os.path.join(os.path.dirname(__file__), '../.env.local'), override=True)
 
 config = context.config
 

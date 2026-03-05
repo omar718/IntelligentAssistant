@@ -2,6 +2,12 @@ from dotenv import load_dotenv
 load_dotenv()                          # loads .env (Docker defaults: host=db)
 load_dotenv(".env.local", override=True)  # local override: host=localhost
 
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import projects

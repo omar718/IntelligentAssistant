@@ -2,6 +2,16 @@ import * as http from 'http';
 import { sendChatRequest } from './llmService';
 
 let server: http.Server | null = null;
+let _openFolderCallback: ((folderPath: string) => void) | null = null;
+let _pickFolderCallback: (() => Promise<string | null>) | null = null;
+
+export function registerOpenFolderCallback(cb: (folderPath: string) => void) {
+  _openFolderCallback = cb;
+}
+
+export function registerPickFolderCallback(cb: () => Promise<string | null>) {
+  _pickFolderCallback = cb;
+}
 
 export function isServerRunning(): boolean {
   return server !== null && server !== undefined;
@@ -20,7 +30,7 @@ export function startServer(port: number = 6009, modelId?: string): Promise<numb
 
     server = http.createServer(async (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
       if (req.method === 'OPTIONS') {
@@ -29,7 +39,56 @@ export function startServer(port: number = 6009, modelId?: string): Promise<numb
         return;
       }
 
-      if (req.method === 'POST' && req.url === '/Mobelite/chat') {
+      if (req.method === 'GET' && req.url === '/pick-folder') {
+        if (!_pickFolderCallback) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'pick-folder handler not registered' }));
+          return;
+        }
+        try {
+          const selectedPath = await _pickFolderCallback();
+          if (selectedPath) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ path: selectedPath }));
+          } else {
+            // User cancelled the dialog
+            res.writeHead(204);
+            res.end();
+          }
+        } catch (error) {
+          const err = error as Error;
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      } else if (req.method === 'POST' && req.url === '/open-folder') {
+        let body = '';
+        req.on('data', (chunk) => {
+          body += chunk.toString();
+        });
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            const folderPath: string = data.path;
+            if (!folderPath) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Missing "path" in request body.' }));
+              return;
+            }
+            if (_openFolderCallback) {
+              _openFolderCallback(folderPath);
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: true }));
+            } else {
+              res.writeHead(503, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'open-folder handler not registered' }));
+            }
+          } catch (error) {
+            const err = error as Error;
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+          }
+        });
+      } else if (req.method === 'POST' && req.url === '/Mobelite/chat') {
         let body = '';
         req.on('data', (chunk) => {
           body += chunk.toString();
