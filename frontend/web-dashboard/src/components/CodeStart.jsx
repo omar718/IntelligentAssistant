@@ -1,11 +1,14 @@
 import { useState, useRef, useEffect } from 'react'
 import '../styles/CodeStart.css'
+import Signup from './Signup'
 
 function CodeStart({ onAnalyze, onNavigate }) {
   const [gitUrl, setGitUrl] = useState('')
   const [error, setError] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [picking, setPicking] = useState(false)
+  const [showLoginOverlay, setShowLoginOverlay] = useState(false)
+  const [showSignup, setShowSignup] = useState(false)
   const menuRef = useRef(null)
 
   useEffect(() => {
@@ -145,8 +148,8 @@ function CodeStart({ onAnalyze, onNavigate }) {
               />
             </div>
             {error && <p className="error-message">{error}</p>}
-            <button className="analyze-button" onClick={handleAnalyze} disabled={picking}>
-              {picking ? 'Waiting for folder selection...' : 'Launch'}
+            <button className="analyze-button" onClick={() => setShowSignup(true)}>
+              Launch
             </button>
           </div>
 
@@ -155,7 +158,11 @@ function CodeStart({ onAnalyze, onNavigate }) {
         </div>
       </main>
 
-      {/* Login Overlay */}
+      {showSignup && (
+        <Signup onClose={() => setShowSignup(false)} onNavigate={onNavigate} />
+      )}
+
+      {/* Login Overlay */}}
       {showLoginOverlay && (
         <div className="login-overlay" onClick={() => setShowLoginOverlay(false)}>
           <div className="login-overlay-card" onClick={(e) => e.stopPropagation()}>
