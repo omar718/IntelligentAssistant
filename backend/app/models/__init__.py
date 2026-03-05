@@ -4,10 +4,10 @@ from app.models.installation_history import InstallationHistory
 from app.models.error_pattern import ErrorPattern
 from app.models.configuration_template import ConfigurationTemplate
 from app.models.user import User, UserRole
-from app.models.refresh_tockens import RefreshToken
+from app.models.refresh_token import RefreshToken
 
 __all__ = [
     'Base', 'Project', 'ProjectStatus',
     'InstallationHistory', 'ErrorPattern', 'ConfigurationTemplate',
-    'User', 'UserRole', 'RefreshToken',
+    'User', 'RefreshToken',
 ]
