@@ -87,6 +87,31 @@
   box-shadow: 0 0 16px rgba(100, 180, 255, 0.15);
 }
 
+.auth-input-error {
+  border-color: #ff6b6b !important;
+  background: rgba(255, 107, 107, 0.08) !important;
+  animation: radiateRed 0.6s ease-in-out;
+}
+
+.auth-input-error:focus {
+  border-color: #ff6b6b;
+  box-shadow: 0 0 20px rgba(255, 107, 107, 0.4);
+}
+
+@keyframes radiateRed {
+  0% {
+    border-color: #ff6b6b;
+    box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(255, 107, 107, 0.3);
+  }
+  100% {
+    border-color: #ff6b6b;
+    box-shadow: 0 0 0 0 rgba(255, 107, 107, 0);
+  }
+}
+
 /* Error */
 .auth-error {
   color: #ff6b6b;

@@ -15,6 +15,7 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   display: flex;
   align-items: center;
+  justify-content: space-between;
   position: relative;
   box-sizing: border-box;
 }
@@ -51,6 +52,25 @@
 .account-avatar-button:hover {
   background: rgba(255, 255, 255, 0.15);
   border-color: rgba(100, 180, 255, 0.4);
+}
+
+.login-header-button {
+  background: rgba(100, 150, 255, 0.2);
+  border: 1px solid rgba(100, 180, 255, 0.4);
+  color: rgba(255, 255, 255, 0.9);
+  padding: 0.5rem 1.2rem;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  z-index: 100;
+}
+
+.login-header-button:hover {
+  background: rgba(100, 150, 255, 0.35);
+  border-color: rgba(100, 180, 255, 0.6);
+  color: #fff;
 }
 
 .avatar-icon {

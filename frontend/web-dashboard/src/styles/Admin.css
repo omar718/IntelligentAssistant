@@ -1,0 +1,418 @@
+/* ── Admin Panel ──────────────────────────────────────────────────────────────── */
+
+.admin-container {
+  min-height: 100vh;
+  background: #0a0a0f;
+  color: #e8e8f0;
+  font-family: 'Segoe UI', sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header ── */
+.admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.2rem 2rem;
+  background: rgba(255,255,255,0.03);
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+
+.admin-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: none;
+  border: 1px solid rgba(255,255,255,0.15);
+  color: #a0a0b8;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.admin-back-btn:hover {
+  background: rgba(255,255,255,0.06);
+  color: #e8e8f0;
+}
+
+.admin-back-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.admin-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.admin-badge {
+  background: rgba(250, 204, 21, 0.15);
+  border: 1px solid rgba(250, 204, 21, 0.4);
+  color: #facc15;
+  padding: 0.3rem 0.8rem;
+  border-radius: 20px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* ── Health badge ── */
+.admin-health-badge {
+  padding: 0.3rem 0.8rem;
+  border-radius: 20px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.admin-health-badge.online {
+  background: rgba(74, 222, 128, 0.15);
+  border: 1px solid rgba(74, 222, 128, 0.4);
+  color: #4ade80;
+}
+
+.admin-health-badge.offline {
+  background: rgba(248, 113, 113, 0.15);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  color: #f87171;
+}
+
+.admin-health-badge.loading {
+  background: rgba(148, 163, 184, 0.15);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  color: #94a3b8;
+}
+
+/* ── Title row ── */
+.admin-title-row {
+  padding: 2rem 2rem 0.5rem;
+}
+
+.admin-title {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: #f0f0fa;
+  margin: 0 0 0.3rem;
+}
+
+.admin-subtitle {
+  color: #6b6b88;
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+/* ── Tabs ── */
+.admin-tabs {
+  display: flex;
+  gap: 0.3rem;
+  padding: 1.2rem 2rem 0;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+
+.admin-tab {
+  background: none;
+  border: none;
+  color: #6b6b88;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: all 0.2s;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.admin-tab:hover {
+  color: #a0a0b8;
+  background: rgba(255,255,255,0.04);
+}
+
+.admin-tab.active {
+  color: #e8e8f0;
+  border-bottom: 2px solid #4ade80;
+}
+
+/* ── Main content ── */
+.admin-main {
+  flex: 1;
+  padding: 2rem;
+}
+
+.admin-section-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.admin-section-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #c0c0d8;
+  margin: 0 0 1.5rem;
+}
+
+.admin-count {
+  background: rgba(255,255,255,0.06);
+  color: #6b6b88;
+  padding: 0.2rem 0.7rem;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  margin-bottom: 1.5rem;
+}
+
+.admin-loading {
+  color: #6b6b88;
+  font-size: 0.9rem;
+  padding: 2rem 0;
+}
+
+/* ── Stats grid ── */
+.admin-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.admin-stat-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 12px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  transition: border-color 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+
+.admin-stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent, #4ade80);
+  opacity: 0.6;
+}
+
+.admin-stat-card:hover {
+  border-color: rgba(255,255,255,0.12);
+}
+
+.admin-stat-icon {
+  color: var(--accent, #4ade80);
+  opacity: 0.8;
+}
+
+.admin-stat-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.admin-stat-value {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: #f0f0fa;
+  line-height: 1;
+}
+
+.admin-stat-label {
+  font-size: 0.82rem;
+  color: #6b6b88;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ── Projects table ── */
+.admin-projects-table {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.admin-table-header {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  padding: 0.8rem 1.2rem;
+  background: rgba(255,255,255,0.04);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #6b6b88;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+
+.admin-table-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  padding: 0.9rem 1.2rem;
+  align-items: center;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  transition: background 0.15s;
+}
+
+.admin-table-row:last-child {
+  border-bottom: none;
+}
+
+.admin-table-row:hover {
+  background: rgba(255,255,255,0.03);
+}
+
+.admin-table-name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: #c0c0d8;
+  font-weight: 500;
+}
+
+.admin-gh-icon {
+  width: 16px;
+  height: 16px;
+  color: #6b6b88;
+  flex-shrink: 0;
+}
+
+.admin-table-date {
+  font-size: 0.82rem;
+  color: #6b6b88;
+}
+
+/* ── Empty state ── */
+.admin-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 4rem 0;
+  color: #6b6b88;
+}
+
+.admin-empty svg {
+  width: 48px;
+  height: 48px;
+  opacity: 0.3;
+}
+
+.admin-empty p {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+/* ── Health panel ── */
+.admin-health-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+  max-width: 600px;
+}
+
+.admin-health-status-card {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  padding: 1.5rem;
+  border-radius: 12px;
+  border: 1px solid;
+}
+
+.admin-health-status-card.online {
+  background: rgba(74, 222, 128, 0.05);
+  border-color: rgba(74, 222, 128, 0.25);
+}
+
+.admin-health-status-card.offline {
+  background: rgba(248, 113, 113, 0.05);
+  border-color: rgba(248, 113, 113, 0.25);
+}
+
+.admin-health-status-icon svg {
+  width: 32px;
+  height: 32px;
+}
+
+.admin-health-status-card.online .admin-health-status-icon {
+  color: #4ade80;
+}
+
+.admin-health-status-card.offline .admin-health-status-icon {
+  color: #f87171;
+}
+
+.admin-health-status-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #e8e8f0;
+  margin-bottom: 0.2rem;
+}
+
+.admin-health-status-sub {
+  font-size: 0.85rem;
+  color: #6b6b88;
+}
+
+.admin-health-details {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.admin-health-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.7rem 1.2rem;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  font-size: 0.88rem;
+}
+
+.admin-health-row:last-child {
+  border-bottom: none;
+}
+
+.admin-health-key {
+  color: #6b6b88;
+  text-transform: capitalize;
+}
+
+.admin-health-val {
+  color: #c0c0d8;
+  font-weight: 500;
+}
+
+.admin-refresh-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #a0a0b8;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  transition: all 0.2s;
+  align-self: flex-start;
+}
+
+.admin-refresh-btn:hover {
+  background: rgba(255,255,255,0.08);
+  color: #e8e8f0;
+}
+
+.admin-refresh-btn svg {
+  width: 16px;
+  height: 16px;
+}

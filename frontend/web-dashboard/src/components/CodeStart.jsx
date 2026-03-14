@@ -1,14 +1,63 @@
 import { useState, useRef, useEffect } from 'react'
 import '../styles/CodeStart.css'
-import Signup from './Signup'
+import LoginOverlay from './LoginOverlay'
+import SignupOverlay from './SignupOverlay'
+
+function InfoOverlay({ title, message, primaryLabel, onPrimary, linkLabel, linkText, onLink, onClose }) {
+  return (
+    <div className="login-overlay" onClick={onClose}>
+      <div className="login-overlay-card" onClick={(e) => e.stopPropagation()}>
+        <button className="login-overlay-close" onClick={onClose}>
+          &times;
+        </button>
+        <h2 className="login-overlay-title">{title}</h2>
+        <p className="login-overlay-message">{message}</p>
+        <button className="login-overlay-button" onClick={onPrimary}>
+          {primaryLabel}
+        </button>
+        <p className="login-overlay-signup-text">
+          {linkLabel}{' '}
+          <span className="login-overlay-signup-link" onClick={onLink}>
+            {linkText}
+          </span>
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function Logo() {
+  return (
+    <div className="logo">
+      <svg className="logo-icon-svg" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="50" cy="50" r="48" fill="none" stroke="#fff" strokeWidth="2"/>
+        <rect x="25" y="20" width="50" height="35" rx="2" fill="none" stroke="#fff" strokeWidth="2"/>
+        <rect x="28" y="23" width="44" height="29" fill="none" stroke="#fff" strokeWidth="1.5"/>
+        <circle cx="33" cy="28" r="2.5" fill="#fff"/>
+        <circle cx="33" cy="33" r="2.5" fill="#fff"/>
+        <circle cx="33" cy="38" r="2.5" fill="#fff"/>
+        <line x1="36" y1="28" x2="44" y2="28" stroke="#fff" strokeWidth="1.5"/>
+        <line x1="36" y1="33" x2="44" y2="33" stroke="#fff" strokeWidth="1.5"/>
+        <line x1="36" y1="38" x2="44" y2="38" stroke="#fff" strokeWidth="1.5"/>
+        <rect x="46" y="35" width="3" height="10" fill="#fff"/>
+        <rect x="51" y="31" width="3" height="14" fill="#fff"/>
+        <rect x="56" y="27" width="3" height="18" fill="#fff"/>
+        <rect x="61" y="24" width="3" height="21" fill="#fff"/>
+        <path d="M20 58C20 58 20 60 22 60H78C80 60 80 58 80 58M28 60H72C72 63 70 65 67 65H33C30 65 28 63 28 60" fill="none" stroke="#fff" strokeWidth="2"/>
+      </svg>
+      <span className="logo-text"> </span>
+    </div>
+  )
+}
 
 function CodeStart({ onAnalyze, onNavigate }) {
   const [gitUrl, setGitUrl] = useState('')
   const [error, setError] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [picking, setPicking] = useState(false)
-  const [showLoginOverlay, setShowLoginOverlay] = useState(false)
-  const [showSignup, setShowSignup] = useState(false)
+  const [showWelcomeOverlay, setShowWelcomeOverlay] = useState(false)
+  const [showNoAccountOverlay, setShowNoAccountOverlay] = useState(false)
+  const [activeModal, setActiveModal] = useState(null) // 'login-modal' | 'signup-modal' | null
   const menuRef = useRef(null)
 
   useEffect(() => {
@@ -24,6 +73,19 @@ function CodeStart({ onAnalyze, onNavigate }) {
   const isValidGitHubUrl = (url) => {
     const githubPattern = /^https?:\/\/(www\.)?github\.com\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+(\.git)?\/?$/
     return githubPattern.test(url.trim())
+  }
+
+  const handleLaunch = () => {
+    if (!gitUrl.trim()) {
+      setError('Please enter a GitHub repository URL.')
+      return
+    }
+    if (!isValidGitHubUrl(gitUrl)) {
+      setError('Please enter a valid GitHub repository URL (e.g. https://github.com/username/repo).')
+      return
+    }
+    setError('')
+    setShowNoAccountOverlay(true)
   }
 
   const handleAnalyze = async () => {
@@ -86,29 +148,26 @@ function CodeStart({ onAnalyze, onNavigate }) {
                 </svg>
                 Projects list
               </button>
+              <button className="dropdown-item" onClick={() => { setMenuOpen(false); onNavigate('admin') }}>
+                <svg viewBox="0 0 24 24" fill="currentColor" className="dropdown-icon">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                </svg>
+                Admin Panel
+              </button>
             </div>
           )}
         </div>
 
-        <div className="logo">
-          <svg className="logo-icon-svg" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="50" cy="50" r="48" fill="none" stroke="#fff" strokeWidth="2"/>
-            <rect x="25" y="20" width="50" height="35" rx="2" fill="none" stroke="#fff" strokeWidth="2"/>
-            <rect x="28" y="23" width="44" height="29" fill="none" stroke="#fff" strokeWidth="1.5"/>
-            <circle cx="33" cy="28" r="2.5" fill="#fff"/>
-            <circle cx="33" cy="33" r="2.5" fill="#fff"/>
-            <circle cx="33" cy="38" r="2.5" fill="#fff"/>
-            <line x1="36" y1="28" x2="44" y2="28" stroke="#fff" strokeWidth="1.5"/>
-            <line x1="36" y1="33" x2="44" y2="33" stroke="#fff" strokeWidth="1.5"/>
-            <line x1="36" y1="38" x2="44" y2="38" stroke="#fff" strokeWidth="1.5"/>
-            <rect x="46" y="35" width="3" height="10" fill="#fff"/>
-            <rect x="51" y="31" width="3" height="14" fill="#fff"/>
-            <rect x="56" y="27" width="3" height="18" fill="#fff"/>
-            <rect x="61" y="24" width="3" height="21" fill="#fff"/>
-            <path d="M20 58C20 58 20 60 22 60H78C80 60 80 58 80 58M28 60H72C72 63 70 65 67 65H33C30 65 28 63 28 60" fill="none" stroke="#fff" strokeWidth="2"/>
-          </svg>
-          <span className="logo-text"> </span>
-        </div>
+        {/* Login button – top right */}
+        <button
+          className="login-header-button"
+          onClick={() => setShowWelcomeOverlay(true)}
+          title="Login"
+        >
+          Log In
+        </button>
+
+        <Logo />
       </header>
 
       <main className="codestart-main">
@@ -148,7 +207,7 @@ function CodeStart({ onAnalyze, onNavigate }) {
               />
             </div>
             {error && <p className="error-message">{error}</p>}
-            <button className="analyze-button" onClick={() => setShowSignup(true)}>
+            <button className="analyze-button" onClick={handleLaunch}>
               Launch
             </button>
           </div>
@@ -158,38 +217,65 @@ function CodeStart({ onAnalyze, onNavigate }) {
         </div>
       </main>
 
-      {showSignup && (
-        <Signup onClose={() => setShowSignup(false)} onNavigate={onNavigate} />
+      {/* No Account Overlay */}
+      {showNoAccountOverlay && (
+        <InfoOverlay
+          title="Oops!"
+          message="It seems that you don't have an account yet. Please sign up to launch your project."
+          primaryLabel="Sign Up"
+          onPrimary={() => { setShowNoAccountOverlay(false); setActiveModal('signup-modal') }}
+          linkLabel="Already have an account?"
+          linkText="Log In"
+          onLink={() => { setShowNoAccountOverlay(false); setActiveModal('login-modal') }}
+          onClose={() => setShowNoAccountOverlay(false)}
+        />
       )}
 
-      {/* Login Overlay */}
-      {showLoginOverlay && (
-        <div className="login-overlay" onClick={() => setShowLoginOverlay(false)}>
-          <div className="login-overlay-card" onClick={(e) => e.stopPropagation()}>
-            <button className="login-overlay-close" onClick={() => setShowLoginOverlay(false)}>
-              &times;
-            </button>
-            <h2 className="login-overlay-title">Welcome!</h2>
-            <p className="login-overlay-message">
-              Welcome to your favourite web project launcher, for the best experience please login to your account
-            </p>
-            <button className="login-overlay-button" onClick={() => onNavigate('login')}>
-              Login
-            </button>
-            <p className="login-overlay-signup-text">
-              You still don't have an account?{' '}
-              <span
-                className="login-overlay-signup-link"
-                onClick={() => onNavigate('signup')}
-              >
-                Signup
-              </span>
-            </p>
-          </div>
-        </div>
+      {/* Welcome Overlay */}
+      {showWelcomeOverlay && (
+        <InfoOverlay
+          title="Welcome!"
+          message="Welcome to your favourite web project launcher, for the best experience please login to your account"
+          primaryLabel="Login"
+          onPrimary={() => { setShowWelcomeOverlay(false); setActiveModal('login-modal') }}
+          linkLabel="You still don't have an account?"
+          linkText="Signup"
+          onLink={() => { setShowWelcomeOverlay(false); setActiveModal('signup-modal') }}
+          onClose={() => setShowWelcomeOverlay(false)}
+        />
+      )}
+
+      {/* Modal Overlays */}
+      {activeModal === 'login-modal' && (
+        <LoginOverlay 
+          onClose={() => setActiveModal(null)} 
+          onNavigate={(page) => {
+            if (page === 'signup-modal') {
+              setActiveModal('signup-modal')
+            } else {
+              setActiveModal(null)
+              onNavigate(page)
+            }
+          }} 
+        />
+      )}
+
+      {activeModal === 'signup-modal' && (
+        <SignupOverlay 
+          onClose={() => setActiveModal(null)} 
+          onNavigate={(page) => {
+            if (page === 'login-modal') {
+              setActiveModal('login-modal')
+            } else {
+              setActiveModal(null)
+              onNavigate(page)
+            }
+          }} 
+        />
       )}
     </div>
   )
 }
+
 
 export default CodeStart

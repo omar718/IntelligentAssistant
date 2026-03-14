@@ -2,9 +2,9 @@ import { useState } from 'react'
 import CodeStart from './components/CodeStart'
 import Processing from './components/Processing'
 import ProjectsList from './components/ProjectsList'
+import AdminPanel from './components/AdminPanel'
 import VSCodeModal from './components/VSCodeModal'
-import Login from './components/Login'
-import Signup from './components/Signup'
+
 
 function App() {
   const [currentPage, setCurrentPage] = useState('home') // 'home' | 'processing' | 'projects' | 'login' | 'signup'
@@ -39,6 +39,9 @@ function App() {
       )}
       {currentPage === 'projects' && (
         <ProjectsList onBack={() => setCurrentPage('home')} />
+      )}
+      {currentPage === 'admin' && (
+        <AdminPanel onBack={() => setCurrentPage('home')} />
       )}
 
       {showVSCodeModal && (
