@@ -1,50 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { jsPDF } from 'jspdf'
+import { userApi } from '../api/client'
 import TechBadge from './TechBadge'
 import '../styles/ProjectsList.css'
-
-// ── Mock data – replace with real API call once backend is ready ───────────────
-const MOCK_PROJECTS = [
-  {
-    id: 1,
-    name: 'e-commerce-api',
-    url: 'https://github.com/user/e-commerce-api',
-    date: '2026-03-02',
-    detected_type: 'Node.js',
-    detected_pm: 'npm',
-    framework: 'Express',
-    databases: ['PostgreSQL', 'Redis'],
-  },
-  {
-    id: 2,
-    name: 'ml-dashboard',
-    url: 'https://github.com/user/ml-dashboard',
-    date: '2026-03-01',
-    detected_type: 'Python',
-    detected_pm: 'pip',
-    framework: 'FastAPI',
-    databases: ['MongoDB'],
-  },
-  {
-    id: 3,
-    name: 'corporate-site',
-    url: 'https://github.com/user/corporate-site',
-    date: '2026-02-28',
-    detected_type: 'PHP',
-    detected_pm: 'composer',
-    framework: 'Laravel',
-    databases: ['MySQL'],
-  },
-  {
-    id: 4,
-    name: 'realtime-chat',
-    url: 'https://github.com/user/realtime-chat',
-    date: '2026-02-27',
-    detected_type: 'Node.js',
-    detected_pm: 'pnpm',
-    framework: 'NestJS',
-    databases: ['PostgreSQL', 'Redis', 'MongoDB'],
-  },
-]
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function formatDate(iso) {
@@ -53,41 +11,48 @@ function formatDate(iso) {
   })
 }
 
-function repoName(url) {
-  try { return new URL(url).pathname.replace(/^\//, '') } catch { return url }
-}
-
 function handleDownload(project) {
-  const lines = [
-    `Project Report – ${project.name}`,
-    `Generated: ${new Date().toLocaleString()}`,
-    '',
-    `Repository:     ${project.url}`,
-    `Detected type:  ${project.detected_type}`,
-    `Package mgr:    ${project.detected_pm}`,
-    project.framework           ? `Framework:      ${project.framework}`                : null,
-    project.databases?.length   ? `Databases:      ${project.databases.join(', ')}`     : null,
-  ].filter(Boolean).join('\n')
+  const doc = new jsPDF()
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const maxTextWidth = pageWidth - 28
 
-  const blob = new Blob([lines], { type: 'text/plain' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `${project.name}-report.txt`
-  a.click()
-  URL.revokeObjectURL(a.href)
+  let y = 20
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(18)
+  doc.text(`Project Report - ${project.name}`, 14, y)
+
+  y += 10
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(11)
+  doc.text(`Generated: ${new Date().toLocaleString()}`, 14, y)
+
+  y += 14
+  const sections = [
+    ['Type',       project.type    || 'N/A'],
+    ['Status',     project.status  || 'N/A'],
+    ['Port',       project.port    ? String(project.port) : 'N/A'],
+    ['Created at', project.created_at ? formatDate(project.created_at) : 'N/A'],
+  ]
+
+  sections.forEach(([label, value]) => {
+    const content = `${label}: ${value}`
+    const lines = doc.splitTextToSize(content, maxTextWidth)
+
+    if (y + lines.length * 7 > 285) {
+      doc.addPage()
+      y = 20
+    }
+
+    doc.text(lines, 14, y)
+    y += lines.length * 7 + 2
+  })
+
+  doc.save(`${project.name}-report.pdf`)
 }
 
 // ── Project card ───────────────────────────────────────────────────────────────
-function ProjectCard({ project, onDelete }) {
+function ProjectCard({ project, onDeleteRequest }) {
   const [open, setOpen] = useState(false)
-  const [showConfirm, setShowConfirm] = useState(false)
-
-  const allTechs = [
-    project.detected_type,
-    project.detected_pm,
-    project.framework,
-    ...(project.databases || []),
-  ].filter(Boolean)
 
   return (
     <div className={`project-card ${open ? 'project-card--open' : ''}`}>
@@ -100,9 +65,6 @@ function ProjectCard({ project, onDelete }) {
             </svg>
             <span>{project.name}</span>
           </div>
-          <a href={project.url} target="_blank" rel="noreferrer" className="project-card-url">
-            {repoName(project.url)}
-          </a>
         </div>
 
         <div className="project-card-right">
@@ -110,7 +72,7 @@ function ProjectCard({ project, onDelete }) {
             <svg viewBox="0 0 24 24" fill="currentColor" className="date-clock-icon">
               <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"/>
             </svg>
-            Created at {formatDate(project.date)}
+            Created at {project.created_at ? formatDate(project.created_at) : '—'}
           </span>
           <div className="project-card-actions">
             <button
@@ -135,67 +97,41 @@ function ProjectCard({ project, onDelete }) {
             <button
               className="project-action-btn delete-btn"
               title="Delete project"
-              onClick={() => setShowConfirm(true)}
+              onClick={() => onDeleteRequest(project)}
             >
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
               </svg>
             </button>
-            {showConfirm && (
-              <div className="delete-confirm-inline">
-                <span className="delete-confirm-text">Delete?</span>
-                <button
-                  className="delete-confirm-btn cancel"
-                  onClick={() => setShowConfirm(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="delete-confirm-btn confirm"
-                  onClick={() => { setShowConfirm(false); onDelete(project.id) }}
-                >
-                  Delete
-                </button>
-              </div>
-            )}
           </div>
         </div>
-      </div>
-
-      {/* ── Badge strip ── */}
-      <div className="project-badges">
-        {allTechs.map(t => <TechBadge key={t} name={t} />)}
       </div>
 
       {/* ── More info dropdown ── */}
       {open && (
         <div className="project-more-info">
           <div className="more-info-grid">
-            <div className="more-info-row">
-              <span className="more-info-label">Runtime</span>
-              <TechBadge name={project.detected_type} />
-            </div>
-            <div className="more-info-row">
-              <span className="more-info-label">Package manager</span>
-              <TechBadge name={project.detected_pm} />
-            </div>
-            {project.framework && (
+            {project.type && (
               <div className="more-info-row">
-                <span className="more-info-label">Framework</span>
-                <TechBadge name={project.framework} />
+                <span className="more-info-label">Runtime</span>
+                <TechBadge name={project.type} />
               </div>
             )}
-            {project.databases?.length > 0 && (
+            {project.status && (
               <div className="more-info-row">
-                <span className="more-info-label">Databases</span>
-                <div className="more-info-badges">
-                  {project.databases.map(db => <TechBadge key={db} name={db} />)}
-                </div>
+                <span className="more-info-label">Status</span>
+                <span className="more-info-value">{project.status}</span>
               </div>
             )}
-            {!project.framework && !project.databases?.length && (
+            {project.port ? (
+              <div className="more-info-row">
+                <span className="more-info-label">Port</span>
+                <span className="more-info-value">{project.port}</span>
+              </div>
+            ) : null}
+            {!project.type && !project.status && (
               <p className="more-info-pending">
-                Framework &amp; database detection coming in the next update.
+                Stack details coming in the next update.
               </p>
             )}
           </div>
@@ -205,12 +141,54 @@ function ProjectCard({ project, onDelete }) {
   )
 }
 
+// ── Delete Confirm Modal ───────────────────────────────────────────────────────
+function DeleteConfirmModal({ project, onCancel, onConfirm }) {
+  return (
+    <div className="delete-modal-overlay" onClick={onCancel}>
+      <div className="delete-modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="delete-modal-icon">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+          </svg>
+        </div>
+        <h2 className="delete-modal-title">Delete project?</h2>
+        <p className="delete-modal-message">
+          Are you sure you want to delete <strong>{project.name}</strong>?<br/>
+          This action cannot be undone.
+        </p>
+        <div className="delete-modal-actions">
+          <button className="delete-modal-btn cancel" onClick={onCancel}>Cancel</button>
+          <button className="delete-modal-btn confirm" onClick={() => onConfirm(project.id)}>Delete</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────────
 function ProjectsList({ onBack }) {
-  const [projects, setProjects] = useState(MOCK_PROJECTS)
+  const [projects, setProjects] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [projectToDelete, setProjectToDelete] = useState(null)
 
-  const handleDelete = (id) => {
+  // Fetch real projects from the backend on mount
+  useEffect(() => {
+    userApi.getMyProjects()
+      .then(data => setProjects(data.items || []))
+      .catch(() => setError('Could not load projects. Please try again.'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleDeleteRequest = (project) => {
+    setProjectToDelete(project)
+  }
+
+  const handleDeleteConfirm = (id) => {
+    // Remove from UI immediately
+    // TODO: call delete API endpoint once backend adds it
     setProjects(prev => prev.filter(p => p.id !== id))
+    setProjectToDelete(null)
   }
 
   return (
@@ -246,15 +224,32 @@ function ProjectsList({ onBack }) {
       <main className="projects-main">
         <div className="projects-title-row">
           <h1 className="projects-title">Projects</h1>
-          <span className="projects-count">{projects.length} project{projects.length !== 1 ? 's' : ''}</span>
+          {!loading && <span className="projects-count">{projects.length} project{projects.length !== 1 ? 's' : ''}</span>}
         </div>
         <p className="projects-subtitle">
-          {projects.length > 0
-            ? 'Your launched project history with detected stack details.'
-            : 'Your project history will appear here.'}
+          {loading
+            ? 'Loading your projects...'
+            : projects.length > 0
+              ? 'Your launched project history with detected stack details.'
+              : 'Your project history will appear here.'}
         </p>
 
-        {projects.length === 0 ? (
+        {/* Loading state */}
+        {loading && (
+          <div className="projects-empty">
+            <p className="empty-label">Loading...</p>
+          </div>
+        )}
+
+        {/* Error state */}
+        {error && !loading && (
+          <div className="projects-empty">
+            <p className="empty-label" style={{ color: '#f87171' }}>{error}</p>
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!loading && !error && projects.length === 0 && (
           <div className="projects-empty">
             <svg viewBox="0 0 24 24" fill="none" className="empty-icon">
               <rect x="3" y="3" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.5"/>
@@ -264,12 +259,25 @@ function ProjectsList({ onBack }) {
             </svg>
             <p className="empty-label">No projects yet</p>
           </div>
-        ) : (
+        )}
+
+        {/* Projects list */}
+        {!loading && !error && projects.length > 0 && (
           <div className="projects-list">
-            {projects.map(p => <ProjectCard key={p.id} project={p} onDelete={handleDelete} />)}
+            {projects.map(p => (
+              <ProjectCard key={p.id} project={p} onDeleteRequest={handleDeleteRequest} />
+            ))}
           </div>
         )}
       </main>
+
+      {projectToDelete && (
+        <DeleteConfirmModal
+          project={projectToDelete}
+          onCancel={() => setProjectToDelete(null)}
+          onConfirm={handleDeleteConfirm}
+        />
+      )}
     </div>
   )
 }

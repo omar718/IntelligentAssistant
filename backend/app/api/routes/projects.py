@@ -6,13 +6,17 @@ import subprocess
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from pydantic import BaseModel
 from typing import Optional
 from app.core.analysis.project_analyzer import ProjectAnalyzer
 from app.core.analysis.nlp_processor import NLPProcessor
 from app.db.session import get_db
+from app.core.database import get_db as get_async_db
+from app.api.dependencies import CurrentUser
 from app.db.crud import project_crud
-from app.models.project import ProjectStatus
+from app.models.project import Project, ProjectStatus
 
 logger = logging.getLogger(__name__)
 
@@ -166,10 +170,17 @@ async def create_project(req: CreateProjectRequest, db: Session = Depends(get_db
         raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 
 @router.get("/api/projects/{project_id}")
-async def get_project(project_id: str, db: Session = Depends(get_db)):
-    project = project_crud.get(db, project_id)
+async def get_project(
+    project_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_async_db),
+):
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    if project.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
     return {
         "id": project.id,
         "name": project.name,
