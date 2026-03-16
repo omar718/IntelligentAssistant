@@ -35,8 +35,8 @@ class Settings(BaseSettings):
     APP_BASE_URL: str = "http://localhost:3000"
     API_BASE_URL: str = "http://localhost:8000"
 
-    # Anthropic (server-side only — NEVER sent to clients)
-    ANTHROPIC_API_KEY: str = ""
+    # GROQ (server-side only — NEVER sent to clients)
+    GROQ_API_KEY: str = ""
 
     class Config:
         env_file = (_ENV_FILE, _ENV_LOCAL_FILE)
