@@ -416,3 +416,224 @@
   width: 16px;
   height: 16px;
 }
+
+/* Users table headers */
+.admin-users-header {
+  grid-template-columns: 2fr 0.8fr 0.8fr 1fr 0.8fr !important;
+}
+
+.admin-users-row {
+  grid-template-columns: 2fr 0.8fr 0.8fr 1fr 0.8fr !important;
+  align-items: center;
+}
+
+/* User info cell */
+.admin-user-info {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.admin-user-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #4ade80;
+  color: #0a0a0f;
+  font-size: 0.8rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.admin-user-name {
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: #e8e8f0;
+}
+
+.admin-user-email {
+  font-size: 0.75rem;
+  color: #6b6b88;
+}
+
+/* Role badge */
+.admin-role-badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: capitalize;
+  background: rgba(148, 163, 184, 0.1);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  color: #94a3b8;
+}
+
+.admin-role-badge--admin {
+  background: rgba(250, 204, 21, 0.1);
+  border-color: rgba(250, 204, 21, 0.3);
+  color: #facc15;
+}
+
+/* Status badge */
+.admin-status-badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.admin-status-badge.active {
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  color: #4ade80;
+}
+
+.admin-status-badge.inactive {
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  color: #f87171;
+}
+
+/* Action buttons */
+.admin-user-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.admin-action-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.admin-action-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.admin-action-btn.activate {
+  background: rgba(74, 222, 128, 0.1);
+  color: #4ade80;
+}
+
+.admin-action-btn.activate:hover {
+  background: rgba(74, 222, 128, 0.2);
+}
+
+.admin-action-btn.deactivate {
+  background: rgba(248, 113, 113, 0.1);
+  color: #f87171;
+}
+
+.admin-action-btn.deactivate:hover {
+  background: rgba(248, 113, 113, 0.2);
+}
+
+.admin-action-btn.role {
+  background: rgba(250, 204, 21, 0.1);
+  color: #facc15;
+}
+
+.admin-action-btn.role:hover {
+  background: rgba(250, 204, 21, 0.2);
+}
+
+.admin-action-btn.delete {
+  background: rgba(248, 113, 113, 0.1);
+  color: #f87171;
+}
+
+.admin-action-btn.delete:hover {
+  background: rgba(248, 113, 113, 0.2);
+}
+
+/* Reuse delete modal styles from ProjectsList */
+.delete-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.delete-modal-card {
+  background: #1a1a2e;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 14px;
+  padding: 2rem;
+  max-width: 380px;
+  width: 90%;
+  text-align: center;
+}
+
+.delete-modal-icon {
+  color: #f87171;
+  margin-bottom: 1rem;
+}
+
+.delete-modal-icon svg {
+  width: 36px;
+  height: 36px;
+}
+
+.delete-modal-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #f0f0fa;
+  margin-bottom: 0.5rem;
+}
+
+.delete-modal-message {
+  font-size: 0.88rem;
+  color: #6b6b88;
+  margin-bottom: 1.5rem;
+  line-height: 1.5;
+}
+
+.delete-modal-actions {
+  display: flex;
+  gap: 0.8rem;
+  justify-content: center;
+}
+
+.delete-modal-btn {
+  padding: 0.6rem 1.5rem;
+  border-radius: 8px;
+  border: none;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.delete-modal-btn.cancel {
+  background: rgba(255,255,255,0.07);
+  color: #a0a0b8;
+}
+
+.delete-modal-btn.cancel:hover {
+  background: rgba(255,255,255,0.12);
+}
+
+.delete-modal-btn.confirm {
+  background: #f87171;
+  color: #fff;
+}
+
+.delete-modal-btn.confirm:hover {
+  background: #ef4444;
+}

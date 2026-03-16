@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { authApi } from '../api/client'
+import { authApi, userApi } from '../api/client'
 import '../styles/Auth.css'
 
-function LoginOverlay({ onNavigate, onClose }) {
+function LoginOverlay({ onNavigate, onClose, onLogin }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -20,13 +20,20 @@ function LoginOverlay({ onNavigate, onClose }) {
     setLoading(true)
 
     try {
+      // Step 1: Login and save token
       await authApi.login({ email, password })
-      // Login successful — close the modal
+
+      // Step 2: Fetch the user's profile
+      const profile = await userApi.getMe()
+
+      // Step 3: Pass the profile up to App.jsx
+      onLogin(profile)
+
+      // Step 4: Close the modal
       onClose()
-      onNavigate('home')
     } catch (err) {
-      // Show the error message from the backend, or a generic one
-      setError(err?.response?.data?.detail || 'Login failed. Please check your credentials.')
+      const detail = err?.response?.data?.detail
+      setError(typeof detail === 'string' ? detail : 'Login failed. Please check your credentials.')
     } finally {
       setLoading(false)
     }

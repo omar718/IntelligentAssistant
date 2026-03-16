@@ -27,12 +27,13 @@ function SignupOverlay({ onNavigate, onClose }) {
     setLoading(true)
 
     try {
-      await authApi.register({ name, email, password })
+      await authApi.register({ name, email, password, confirm_password: confirmPassword })
       // Registration successful — switch to login so they can sign in
       onNavigate('login-modal')
     } catch (err) {
       // Show the error message from the backend, or a generic one
-      setError(err?.response?.data?.detail || 'Registration failed. Please try again.')
+      const detail = err?.response?.data?.detail
+      setError(typeof detail === 'string' ? detail : 'Registration failed. Please try again.')
     } finally {
       setLoading(false)
     }

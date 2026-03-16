@@ -37,7 +37,7 @@ api.interceptors.request.use((config) => {
 
 export const authApi = {
   // Create a new account
-  register: (data: { name: string; email: string; password: string }) =>
+  register: (data: { name: string; email: string; password: string; confirm_password: string }) =>
     api.post('/auth/register', data).then(r => r.data),
 
   // Log in — saves the token automatically
