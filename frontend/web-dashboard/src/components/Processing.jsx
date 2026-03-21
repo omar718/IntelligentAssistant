@@ -6,6 +6,8 @@ function Processing({ gitUrl, cloneDir, onBack }) {
   const [completed, setCompleted] = useState(false)
   const [error, setError] = useState(null)
   const [isCancelling, setIsCancelling] = useState(false)
+  const [taskProgress, setTaskProgress] = useState(0)
+  const [taskMessage, setTaskMessage] = useState('Queued...')
 
   const taskIdRef = useRef(
     (window.crypto?.randomUUID
@@ -19,7 +21,11 @@ function Processing({ gitUrl, cloneDir, onBack }) {
     let createFailed = false
     let notFoundCount = 0
     let pollInterval = null
+    let errorCount = 0
+    const maxErrors = 10
     const taskId = taskIdRef.current
+    const startTime = Date.now()
+    const maxDuration = 10 * 60 * 1000
 
     console.log('[Processing] Component mounted with:', { gitUrl, cloneDir, taskId })
 
@@ -50,6 +56,15 @@ function Processing({ gitUrl, cloneDir, onBack }) {
     }
 
     const applyTaskStatus = (status) => {
+      const numericProgress = Number(status?.progress)
+      if (!Number.isNaN(numericProgress)) {
+        setTaskProgress(Math.max(0, Math.min(100, numericProgress)))
+        console.log('[Processing] Progress update:', numericProgress)
+      }
+      if (status?.message) {
+        setTaskMessage(status.message)
+      }
+
       if (status.error) {
         setError(status.error)
       }
@@ -60,14 +75,51 @@ function Processing({ gitUrl, cloneDir, onBack }) {
     }
 
     const pollTask = async () => {
+      if (finished || stopped) return
+      
+      // Safety: stop if too long (10+ minutes)
+      if (Date.now() - startTime > maxDuration) {
+        finished = true
+        if (pollInterval) clearInterval(pollInterval)
+        console.log('[Processing] Polling exceeded 10 minute timeout')
+        setError('Task took too long. Please try again.')
+        return
+      }
+      
       try {
         const status = await projectsApi.getTaskStatus(taskId)
-        if (stopped) return
+        if (stopped || finished) return
+        errorCount = 0  // Reset error count on success
         notFoundCount = 0
         applyTaskStatus(status)
       } catch (err) {
-        if (stopped) return
-        if (err?.response?.status === 404) {
+        if (stopped || finished) return
+        
+        errorCount++
+        const statusCode = err?.response?.status
+        const errMsg = err?.response?.data?.detail || err?.message || String(err)
+        
+        console.log('[Processing] Poll error:', { errorCount, statusCode, errMsg })
+        
+        // Check for auth errors more robustly
+        if (statusCode === 401 || statusCode === 403 || errMsg?.includes('invalid') || errMsg?.includes('expired')) {
+          finished = true
+          if (pollInterval) clearInterval(pollInterval)
+          console.log('[Processing] Auth error detected, stopping poll:', { statusCode, errMsg })
+          setError('Session expired. Please sign in again and relaunch the project.')
+          return
+        }
+        
+        // Stop after too many errors (likely broken task)
+        if (errorCount >= maxErrors) {
+          finished = true
+          if (pollInterval) clearInterval(pollInterval)
+          console.log('[Processing] Too many poll errors, stopping')
+          setError(`Task polling failed repeatedly: ${errMsg}`)
+          return
+        }
+        
+        if (statusCode === 404) {
           notFoundCount += 1
           if (createFailed && notFoundCount >= 20) {
             if (pollInterval) clearInterval(pollInterval)
@@ -75,8 +127,9 @@ function Processing({ gitUrl, cloneDir, onBack }) {
           }
           return
         }
+        
         if (!finished) {
-          console.error('Task polling failed:', err)
+          console.error('[Processing] Task polling error:', { statusCode, errMsg, err })
         }
       }
     }
@@ -101,8 +154,17 @@ function Processing({ gitUrl, cloneDir, onBack }) {
         .catch(err => {
           if (stopped) return
           createFailed = true
-          console.error('[Processing] Project create request failed:', err)
-          const detail = err?.response?.data?.detail || err?.message
+          const statusCode = err?.response?.status
+          const detail = err?.response?.data?.detail || err?.message || String(err)
+          console.error('[Processing] Project create request failed:', { statusCode, detail, err })
+          
+          if (statusCode === 401 || statusCode === 403 || detail?.includes('invalid') || detail?.includes('expired')) {
+            finished = true
+            if (pollInterval) clearInterval(pollInterval)
+            setError('Session expired. Please sign in again and relaunch the project.')
+            return
+          }
+          
           if (detail && !finished) {
             setError(`Project creation request failed: ${detail}`)
             if (pollInterval) clearInterval(pollInterval)
@@ -161,6 +223,8 @@ function Processing({ gitUrl, cloneDir, onBack }) {
           {!completed && !error && (
             <>
               <p className="in-progress-blink">IN PROGRESS</p>
+              <p className="processing-repo">Progress: {taskProgress.toFixed(1)}%</p>
+              <p className="processing-repo">{taskMessage}</p>
               <button className="processing-cancel-btn" onClick={handleCancel} disabled={isCancelling}>
                 {isCancelling ? 'Cancelling...' : 'Cancel'}
               </button>

@@ -24,7 +24,7 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 # ---------------------------------------------------------------------------
-# JWT access tokens  (15-minute TTL)
+# JWT access tokens  (configured TTL)
 # ---------------------------------------------------------------------------
 
 def create_access_token(subject: str, role: str) -> str:

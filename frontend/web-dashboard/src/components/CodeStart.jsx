@@ -305,12 +305,12 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
       {infoOverlay === 'no-account' && (
         <InfoOverlay
           title="Oops!"
-          message="It seems that you don't have an account yet. Please sign up to launch your project."
+          message="It seems that you don't have an account yet. You can sign up, log in, or close this popup to continue and launch as guest."
           primaryLabel="Sign Up"
           onPrimary={() => { setInfoOverlay(null); setActiveModal('signup-modal') }}
           linkLabel={{ prefix: 'Already have an account?', action: 'Log In' }}
           onLink={() => { setInfoOverlay(null); setActiveModal('login-modal') }}
-          onClose={() => setInfoOverlay(null)}
+          onClose={() => { setInfoOverlay(null); void handleAnalyze() }}
         />
       )}
 

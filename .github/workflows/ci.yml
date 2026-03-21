@@ -44,7 +44,7 @@ jobs:
 
       - name: Run tests
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost/intelligent_assistant
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost/intelligent_assistant
           REDIS_URL: redis://localhost:6379
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           JWT_SECRET_KEY: ci-test-jwt-secret-key

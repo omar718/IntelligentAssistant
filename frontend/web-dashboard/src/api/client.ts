@@ -1,11 +1,29 @@
 import axios from 'axios';
 
-// In dev, Vite proxies /api and /auth → http://127.0.0.1:8000
+// In dev, Vite proxies /api and /auth → http://localhost:8000
 // In production, set VITE_API_URL to your deployed backend URL.
 const api = axios.create({
   baseURL: (import.meta as any).env.VITE_API_URL || '',
   withCredentials: true,
+  headers: {
+    'Content-Type': 'application/json',
+  },
 });
+
+let refreshTokenPromise: Promise<string> | null = null
+let refreshSessionPromise: Promise<any> | null = null
+
+function refreshSession() {
+  if (!refreshSessionPromise) {
+    refreshSessionPromise = api.post('/auth/refresh').then(r => {
+      if (r.data.access_token) setToken(r.data.access_token);
+      return r.data;
+    }).finally(() => {
+      refreshSessionPromise = null
+    })
+  }
+  return refreshSessionPromise
+}
 
 // ── Token helpers ──────────────────────────────────────────────────────────────
 // After login, we store the JWT token in localStorage so it persists on refresh.
@@ -56,11 +74,7 @@ export const authApi = {
     }),
 
   // Refresh the token (call this when the token expires)
-  refresh: () =>
-    api.post('/auth/refresh').then(r => {
-      if (r.data.access_token) setToken(r.data.access_token);
-      return r.data;
-    }),
+  refresh: () => refreshSession(),
 
   // Verify email after registration
   verifyEmail: (token: string) =>
@@ -123,31 +137,58 @@ export const healthApi = {
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config;
+    const originalRequest = error.config || {};
+    const requestUrl = String(originalRequest.url || '')
 
     // If the error is 401 and it's NOT a login/refresh attempt
     if (
       error.response?.status === 401 &&
       originalRequest &&
       !originalRequest._retry &&
-      !String(originalRequest.url || '').includes('/auth/')
+      !requestUrl.includes('/auth/')
     ) {
       originalRequest._retry = true;
 
       try {
-        console.log("Token expired. Attempting silent refresh...");
-        const data = await authApi.refresh();
+        console.log('[API] 401 detected on', requestUrl, '- attempting refresh')
         
-        // Update the failed request with the NEW token
-        originalRequest.headers.Authorization = `Bearer ${data.access_token}`;
-        
-        // Retry the original request
+        if (!refreshTokenPromise) {
+          refreshTokenPromise = authApi
+            .refresh()
+            .then((data) => {
+              console.log('[API] Token refreshed successfully')
+              return data.access_token as string
+            })
+            .catch((refreshErr) => {
+              console.error('[API] Refresh failed:', {
+                status: refreshErr?.response?.status,
+                detail: refreshErr?.response?.data?.detail,
+                message: refreshErr?.message
+              })
+              // Clear auth state on refresh failure
+              clearToken();
+              localStorage.removeItem('user');
+              throw refreshErr
+            })
+            .finally(() => {
+              refreshTokenPromise = null
+            })
+        }
+
+        const newAccessToken = await refreshTokenPromise
+        originalRequest.headers = originalRequest.headers || {}
+        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`
+        console.log('[API] Retrying original request to', requestUrl)
+
         return api(originalRequest);
       } catch (refreshErr) {
-        console.error("Refresh token also expired. Logging out.");
+        const message = (refreshErr as any)?.message || (refreshErr as any)?.response?.data?.detail || 'Unknown refresh error'
+        console.error('[API] Token refresh failed completely, logging out', message);
         clearToken();
         localStorage.removeItem('user');
-        window.location.href = '/';
+        if (window.location.pathname !== '/') {
+          window.location.href = '/';
+        }
         return Promise.reject(refreshErr);
       }
     }

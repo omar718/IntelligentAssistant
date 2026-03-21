@@ -5,6 +5,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.security import hash_password, verify_password
 from app.models.user import User, UserRole
 from app.models.refresh_token import RefreshToken
@@ -66,7 +67,7 @@ async def save_refresh_token(
     rt = RefreshToken(
         token_hash=token_hash,
         user_id=user_id,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_TTL_DAYS),
         revoked=False,
     )
     db.add(rt)

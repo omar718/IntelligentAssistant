@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import CodeStart from './components/CodeStart'
 import Processing from './components/Processing'
 import ProjectsList from './components/ProjectsList'
 import AdminPanel from './components/AdminPanel'
 import VSCodeModal from './components/VSCodeModal'
+import { authApi } from './api/client'
 
 // ── Protected route — only allows users with role ADMIN ───────────────────────
 function AdminRoute({ user, children }) {
@@ -75,6 +76,32 @@ function App() {
     const saved = localStorage.getItem('user')
     return saved ? JSON.parse(saved) : null
   })
+
+  useEffect(() => {
+    let cancelled = false
+
+    const refreshOnLoad = async () => {
+      try {
+        const data = await authApi.refresh()
+        if (cancelled) return
+
+        if (data?.user) {
+          localStorage.setItem('user', JSON.stringify(data.user))
+          setUser(data.user)
+        }
+      } catch {
+        if (cancelled) return
+        localStorage.removeItem('user')
+        setUser(null)
+      }
+    }
+
+    void refreshOnLoad()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Save user to localStorage when logging in
   const handleLogin = (profile) => {

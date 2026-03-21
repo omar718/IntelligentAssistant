@@ -83,7 +83,7 @@ class RateLimiter:
 # Pre-configured limiters matching the spec (§2.5)
 # ---------------------------------------------------------------------------
 
-login_limiter = RateLimiter(max_attempts=5, window_seconds=900)       # 5 / 15 min / IP
+login_limiter = RateLimiter(max_attempts=10, window_seconds=900)       # 10 / 15 min / IP
 register_limiter = RateLimiter(max_attempts=10, window_seconds=3600)  # 10 / 1 hr / IP
 forgot_limiter = RateLimiter(max_attempts=3, window_seconds=3600)     # 3 / 1 hr / email
 reset_limiter = RateLimiter(max_attempts=5, window_seconds=3600)      # 5 / 1 hr / token

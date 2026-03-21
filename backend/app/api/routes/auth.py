@@ -42,7 +42,6 @@ from app.services.user_service import (
     get_user_by_id,
     revoke_all_user_refresh_tokens,
     revoke_refresh_token,
-    revoke_token_family,
     save_refresh_token,
     update_last_login,
     update_password,
@@ -59,9 +58,9 @@ COOKIE_OPTIONS = dict(
     key=REFRESH_COOKIE,
     httponly=True,
     secure=not settings.DEBUG,
-    samesite="strict",
+    samesite="lax",
     max_age=7 * 24 * 3600,  # 7 days in seconds
-    path="/auth/refresh",   # Cookie only sent to refresh endpoint
+    path="/",   # Cookie only sent to refresh endpoint
 )
 
 
@@ -70,7 +69,7 @@ def _set_refresh_cookie(response: Response, raw_token: str) -> None:
 
 
 def _clear_refresh_cookie(response: Response) -> None:
-    response.delete_cookie(REFRESH_COOKIE, path="/auth/refresh")
+    response.delete_cookie(REFRESH_COOKIE, path="/")
 
 
 def _rate_limit_error(retry_after: int) -> HTTPException:
@@ -191,13 +190,10 @@ async def refresh_token(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
     if rt.revoked:
-        # Reuse detected — revoke entire token family
-        await revoke_token_family(db, rt.user_id)
-        await db.commit()  # Commit revocation durably before raising
         _clear_refresh_cookie(response)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session compromised. Please log in again.",
+            detail="Refresh token already used. Please log in again.",
         )
 
     if _as_utc(rt.expires_at) < datetime.now(timezone.utc):
