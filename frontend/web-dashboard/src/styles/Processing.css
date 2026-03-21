@@ -171,6 +171,22 @@
   animation: blink-on-off 0.9s steps(1, end) infinite;
 }
 
+.processing-cancel-btn {
+  margin-top: 1rem;
+  padding: 0.55rem 1.2rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.processing-cancel-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 @keyframes pulse {
   0%, 100% {
     opacity: 1;

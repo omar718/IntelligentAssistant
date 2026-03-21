@@ -89,6 +89,10 @@ export const projectsApi = {
   // Get live status for a project creation task
   getTaskStatus: (taskId: string) =>
     api.get(`/api/projects/tasks/${taskId}`).then(r => r.data),
+
+  // Request cancellation for a running project creation task
+  cancelTask: (taskId: string) =>
+    api.post(`/api/projects/tasks/${taskId}/cancel`).then(r => r.data),
 };
 
 // ── User API ───────────────────────────────────────────────────────────────────

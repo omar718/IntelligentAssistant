@@ -5,6 +5,7 @@ import '../styles/Processing.css'
 function Processing({ gitUrl, cloneDir, onBack }) {
   const [completed, setCompleted] = useState(false)
   const [error, setError] = useState(null)
+  const [isCancelling, setIsCancelling] = useState(false)
 
   const taskIdRef = useRef(
     (window.crypto?.randomUUID
@@ -105,6 +106,18 @@ function Processing({ gitUrl, cloneDir, onBack }) {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleCancel = async () => {
+    if (isCancelling || completed) return
+    setIsCancelling(true)
+    try {
+      await projectsApi.cancelTask(taskIdRef.current)
+      onBack()
+    } catch (err) {
+      setError(err?.response?.data?.detail || 'Could not cancel task.')
+      setIsCancelling(false)
+    }
+  }
+
   return (
     <div className="processing-container">
       <header className="processing-header">
@@ -135,7 +148,12 @@ function Processing({ gitUrl, cloneDir, onBack }) {
           <p className="processing-repo">{gitUrl}</p>
 
           {!completed && !error && (
-            <p className="in-progress-blink">IN PROGRESS</p>
+            <>
+              <p className="in-progress-blink">IN PROGRESS</p>
+              <button className="processing-cancel-btn" onClick={handleCancel} disabled={isCancelling}>
+                {isCancelling ? 'Cancelling...' : 'Cancel'}
+              </button>
+            </>
           )}
 
           {completed && (

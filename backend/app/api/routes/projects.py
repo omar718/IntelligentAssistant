@@ -42,6 +42,46 @@ PATH_MAPPINGS = [
 
 TASK_PROGRESS: Dict[str, Dict[str, Any]] = {}
 TASK_PROGRESS_LOCK = threading.Lock()
+TASK_CANCELLED: set[str] = set()
+TASK_PROCESSES: Dict[str, subprocess.Popen] = {}
+
+
+class TaskCancelledError(Exception):
+    pass
+
+
+def _is_task_cancelled(task_id: Optional[str]) -> bool:
+    if not task_id:
+        return False
+    with TASK_PROGRESS_LOCK:
+        return task_id in TASK_CANCELLED
+
+
+def _register_task_process(task_id: Optional[str], process: subprocess.Popen) -> None:
+    if not task_id:
+        return
+    with TASK_PROGRESS_LOCK:
+        TASK_PROCESSES[task_id] = process
+
+
+def _unregister_task_process(task_id: Optional[str]) -> None:
+    if not task_id:
+        return
+    with TASK_PROGRESS_LOCK:
+        TASK_PROCESSES.pop(task_id, None)
+
+
+def _request_task_cancel(task_id: str) -> bool:
+    with TASK_PROGRESS_LOCK:
+        if task_id not in TASK_PROGRESS:
+            return False
+        TASK_CANCELLED.add(task_id)
+        process = TASK_PROCESSES.get(task_id)
+
+    if process and process.poll() is None:
+        process.terminate()
+
+    return True
 
 
 def set_task_progress(
@@ -128,6 +168,9 @@ async def create_project(
 
 
     try:
+        if _is_task_cancelled(task_id):
+            raise TaskCancelledError("task_cancelled")
+
         if req.source.type == "git":
             if not req.source.url:
                 raise HTTPException(status_code=400, detail="url is required for git source")
@@ -162,6 +205,9 @@ async def create_project(
         else:
             raise HTTPException(status_code=400, detail="invalid source type")
 
+        if _is_task_cancelled(task_id):
+            raise TaskCancelledError("task_cancelled")
+
         set_task_progress(
             task_id,
             stage="analyzing",
@@ -188,6 +234,9 @@ async def create_project(
             info = nlp.merge_with_project_info(info, nlp_result)
         except Exception as e:
             logger.warning("NLP analysis failed (non-fatal): %s", e)
+
+        if _is_task_cancelled(task_id):
+            raise TaskCancelledError("task_cancelled")
 
         project_name = Path(str(project_path)).name
         logger.info("Saving project '%s' to database", project_name)
@@ -241,6 +290,17 @@ async def create_project(
             "version_constraints": info.version_constraints,
         }
 
+    except TaskCancelledError:
+        set_task_progress(
+            task_id,
+            stage="failed",
+            progress=100,
+            message="Task cancelled by user.",
+            done=True,
+            error="task_cancelled",
+        )
+        raise HTTPException(status_code=409, detail="Task cancelled")
+
     except HTTPException:
         set_task_progress(
             task_id,
@@ -276,6 +336,25 @@ async def get_project_task_status(
         raise HTTPException(status_code=404, detail="Task not found")
 
     return task
+
+
+@router.post("/api/projects/tasks/{task_id}/cancel")
+async def cancel_project_task(
+    task_id: str,
+    current_user: CurrentUser,
+):
+    cancelled = _request_task_cancel(task_id)
+    if not cancelled:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    set_task_progress(
+        task_id,
+        stage="cloning",
+        progress=50,
+        message="Cancellation requested...",
+    )
+
+    return {"task_id": task_id, "status": "cancellation_requested"}
 
 
 @router.get("/api/projects/{project_id}")
@@ -364,6 +443,7 @@ def _run_git_with_progress(cmd: list[str], task_id: Optional[str], base: int, sp
         universal_newlines=True,
         bufsize=1,
     )
+    _register_task_process(task_id, process)
 
     stderr_thread = threading.Thread(target=_reader, args=(process.stderr, "stderr"), daemon=True)
     stdout_thread = threading.Thread(target=_reader, args=(process.stdout, "stdout"), daemon=True)
@@ -372,6 +452,16 @@ def _run_git_with_progress(cmd: list[str], task_id: Optional[str], base: int, sp
 
     eof_count = 0
     while eof_count < 2:
+        if _is_task_cancelled(task_id):
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            _unregister_task_process(task_id)
+            raise TaskCancelledError("task_cancelled")
+
         now = time.monotonic()
         if task_id and process.poll() is None and now - last_heartbeat >= 1.0:
             max_fallback = float(base + span - 2)
@@ -404,9 +494,14 @@ def _run_git_with_progress(cmd: list[str], task_id: Optional[str], base: int, sp
     stderr_thread.join(timeout=1)
     stdout_thread.join(timeout=1)
 
-    return_code = process.wait()
-    if return_code != 0:
-        raise subprocess.CalledProcessError(return_code, cmd)
+    try:
+        return_code = process.wait()
+        if return_code != 0:
+            if _is_task_cancelled(task_id):
+                raise TaskCancelledError("task_cancelled")
+            raise subprocess.CalledProcessError(return_code, cmd)
+    finally:
+        _unregister_task_process(task_id)
 
     if task_id:
         set_task_progress(
