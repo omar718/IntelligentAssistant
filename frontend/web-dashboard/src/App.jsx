@@ -25,8 +25,10 @@ function MainApp({ user, onLogin, onLogout }) {
   const [showVSCodeModal, setShowVSCodeModal] = useState(false)
 
   const handleAnalyze = (url, dir) => {
+    console.log('[App] handleAnalyze called with:', { url, dir })
     setGitUrl(url)
     setCloneDir(dir || '')
+    console.log('[App] State updated, navigating to processing page')
     setCurrentPage('processing')
   }
 

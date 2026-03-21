@@ -21,6 +21,8 @@ function Processing({ gitUrl, cloneDir, onBack }) {
     let pollInterval = null
     const taskId = taskIdRef.current
 
+    console.log('[Processing] Component mounted with:', { gitUrl, cloneDir, taskId })
+
     const completeFromTaskStatus = (status) => {
       if (finished || stopped) return
       finished = true
@@ -86,16 +88,25 @@ function Processing({ gitUrl, cloneDir, onBack }) {
 
       void pollTask()
 
+      const createPayload = { source: { type: 'git', url: gitUrl, clone_dir: cloneDir || undefined }, task_id: taskId }
+      console.log('[Processing] Calling projectsApi.create with:', createPayload)
+      
       projectsApi
-        .create({ source: { type: 'git', url: gitUrl, clone_dir: cloneDir || undefined }, task_id: taskId })
+        .create(createPayload)
         .then(result => {
+          console.log('[Processing] projectsApi.create succeeded:', result)
           if (stopped || finished) return
           completeFromTaskStatus({ done: true, stage: 'launching', host_path: result?.host_path })
         })
         .catch(err => {
           if (stopped) return
           createFailed = true
-          console.warn('Project create request failed, continuing with task polling:', err)
+          console.error('[Processing] Project create request failed:', err)
+          const detail = err?.response?.data?.detail || err?.message
+          if (detail && !finished) {
+            setError(`Project creation request failed: ${detail}`)
+            if (pollInterval) clearInterval(pollInterval)
+          }
         })
     }, 0)
 

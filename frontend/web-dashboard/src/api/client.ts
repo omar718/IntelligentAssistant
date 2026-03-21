@@ -4,6 +4,7 @@ import axios from 'axios';
 // In production, set VITE_API_URL to your deployed backend URL.
 const api = axios.create({
   baseURL: (import.meta as any).env.VITE_API_URL || '',
+  withCredentials: true,
 });
 
 // ── Token helpers ──────────────────────────────────────────────────────────────
@@ -125,7 +126,12 @@ api.interceptors.response.use(
     const originalRequest = error.config;
 
     // If the error is 401 and it's NOT a login/refresh attempt
-    if (error.response?.status === 401 && !originalRequest._retry && !originalRequest.url.includes('/auth/')) {
+    if (
+      error.response?.status === 401 &&
+      originalRequest &&
+      !originalRequest._retry &&
+      !String(originalRequest.url || '').includes('/auth/')
+    ) {
       originalRequest._retry = true;
 
       try {
@@ -140,7 +146,8 @@ api.interceptors.response.use(
       } catch (refreshErr) {
         console.error("Refresh token also expired. Logging out.");
         clearToken();
-        window.location.href = '/login'; 
+        localStorage.removeItem('user');
+        window.location.href = '/';
         return Promise.reject(refreshErr);
       }
     }

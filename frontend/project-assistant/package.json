@@ -35,15 +35,23 @@
         {
           "type": "webview",
           "id": "project-assistant.assistant",
-          "name": "Chat Assistant"
+          "name": "Chat Assistant",
+          "icon": "$(comment-discussion)"
         },
         {
           "type": "tree",
           "id": "projectAssistant.projects",
-          "name": "My Projects"
+          "name": "My Projects",
+          "icon": "$(repo)"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "projectAssistant.projects",
+        "contents": "No authenticated projects.\n[Sign In](command:project-assistant.login) • [Sign Out](command:project-assistant.logout)"
+      }
+    ],
     "commands": [
       {
         "command": "project-assistant.openAssistant",
@@ -51,17 +59,33 @@
       },
       {
         "command": "project-assistant.login",
-        "title": "Project Assistant: Sign In"
+        "title": "Project Assistant: Sign In",
+        "icon": "$(account)"
       },
       {
         "command": "project-assistant.logout",
-        "title": "Project Assistant: Sign Out"
+        "title": "Project Assistant: Sign Out",
+        "icon": "$(sign-out)"
       },
       {
         "command": "project-assistant.retryConnection",
         "title": "Project Assistant: Retry Connection"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "project-assistant.login",
+          "when": "view == projectAssistant.projects && !projectAssistant.authenticated",
+          "group": "navigation@9"
+        },
+        {
+          "command": "project-assistant.logout",
+          "when": "view == projectAssistant.projects && projectAssistant.authenticated",
+          "group": "navigation@10"
+        }
+      ]
+    },
     "keybindings": [
       {
         "command": "project-assistant.openAssistant",

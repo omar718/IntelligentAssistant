@@ -84,14 +84,11 @@ async function activate(context) {
             await treeProvider.loadFromApi(authManager.getApiClient());
         }
         else {
+            await treeProvider.clearProjects(false);
             vscode.commands.executeCommand('project-assistant.login');
         }
     };
     const onOffline = () => {
-        if (authManager?.isAuthenticated()) {
-            treeProvider.loadFromCache();
-            return;
-        }
         void treeProvider.clearProjects(false);
     };
     // ─── Auth Manager ─────────────────────────────────────────────────────────
@@ -102,19 +99,44 @@ async function activate(context) {
     }
     // ─── Folder Callbacks ─────────────────────────────────────────────────────
     (0, server_1.registerOpenFolderCallback)((folderPath) => {
-        const uri = vscode.Uri.file(folderPath);
-        vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
+        try {
+            const uri = vscode.Uri.file(folderPath);
+            void vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
+        }
+        catch (err) {
+            console.error('Error in openFolderCallback:', err);
+            vscode.window.showErrorMessage(`Error opening folder: ${err?.message || 'Unknown error'}`);
+        }
     });
     (0, server_1.registerPickFolderCallback)(async () => {
-        const uris = await vscode.window.showOpenDialog({
-            canSelectFiles: false,
-            canSelectFolders: true,
-            canSelectMany: false,
-            openLabel: 'Select clone destination',
-            title: 'Where should the repository be cloned?',
-            defaultUri: vscode.Uri.file(os.homedir()),
-        });
-        return uris && uris.length > 0 ? uris[0].fsPath : null;
+        try {
+            // Add a timeout to prevent hanging
+            const timeoutPromise = new Promise((resolve) => {
+                setTimeout(() => {
+                    console.warn('Folder picker timeout - returning null');
+                    resolve(null);
+                }, 60000); // 60 second timeout
+            });
+            const pickerPromise = (async () => {
+                const uris = await vscode.window.showOpenDialog({
+                    canSelectFiles: false,
+                    canSelectFolders: true,
+                    canSelectMany: false,
+                    openLabel: 'Select clone destination',
+                    title: 'Where should the repository be cloned?',
+                    defaultUri: vscode.Uri.file(os.homedir()),
+                });
+                console.log('Folder picker result:', uris);
+                return uris && uris.length > 0 ? uris[0].fsPath : null;
+            })();
+            const result = await Promise.race([pickerPromise, timeoutPromise]);
+            return result;
+        }
+        catch (err) {
+            console.error('Folder picker error:', err);
+            vscode.window.showErrorMessage(`Folder picker error: ${err.message}`);
+            return null;
+        }
     });
     // ─── Auto-start Server ────────────────────────────────────────────────────
     (0, server_1.startServer)(6009)
@@ -164,43 +186,60 @@ async function activate(context) {
     }), vscode.commands.registerCommand('project-assistant.getServerStatus', () => {
         return { running: (0, server_1.isServerRunning)() };
     }), vscode.commands.registerCommand('project-assistant.login', async () => {
-        const email = await vscode.window.showInputBox({
-            prompt: 'Enter your email',
-            placeHolder: 'you@example.com',
-            ignoreFocusOut: true,
-        });
-        if (!email) {
-            return;
-        }
-        const password = await vscode.window.showInputBox({
-            prompt: 'Enter your password',
-            password: true,
-            ignoreFocusOut: true,
-        });
-        if (!password) {
-            return;
-        }
         try {
+            const email = await vscode.window.showInputBox({
+                prompt: 'Enter your email',
+                placeHolder: 'you@example.com',
+                ignoreFocusOut: true,
+            });
+            if (!email) {
+                return { success: false, cancelled: true };
+            }
+            const password = await vscode.window.showInputBox({
+                prompt: 'Enter your password',
+                password: true,
+                ignoreFocusOut: true,
+            });
+            if (!password) {
+                return { success: false, cancelled: true };
+            }
             await authManager.login(email, password);
             await onOnline();
             vscode.window.showInformationMessage('Successfully signed in!');
+            return { success: true };
         }
         catch (err) {
             const msg = err?.response?.status === 401
                 ? 'Invalid email or password'
                 : 'Login failed. Check the backend is running.';
             vscode.window.showErrorMessage(msg);
+            return { success: false, error: msg };
         }
     }), vscode.commands.registerCommand('project-assistant.logout', async () => {
-        await authManager.logout();
-        await treeProvider.clearProjects(true);
-    }), vscode.commands.registerCommand('project-assistant.retryConnection', async () => {
-        const online = await authManager.checkHealth();
-        if (online) {
-            onOnline();
+        try {
+            await authManager.logout();
+            await treeProvider.clearProjects(true);
+            return { success: true };
         }
-        else {
-            vscode.window.showWarningMessage('Backend still offline. Is the server running?');
+        catch (err) {
+            vscode.window.showErrorMessage('Logout failed');
+            return { success: false, error: err?.message };
+        }
+    }), vscode.commands.registerCommand('project-assistant.retryConnection', async () => {
+        try {
+            const online = await authManager.checkHealth();
+            if (online) {
+                onOnline();
+                return { success: true, online: true };
+            }
+            else {
+                vscode.window.showWarningMessage('Backend still offline. Is the server running?');
+                return { success: false, online: false };
+            }
+        }
+        catch (err) {
+            vscode.window.showErrorMessage('Connection check failed');
+            return { success: false, error: err?.message };
         }
     }), vscode.commands.registerCommand('project-assistant.openAssistant', () => {
         vscode.commands.executeCommand('workbench.view.extension.project-assistant-sidebar');
@@ -1846,6 +1885,7 @@ class AuthManager {
     apiClient;
     healthPollTimer;
     isOnline = false;
+    isSessionVerified = false;
     constructor(context, statusBar, onOnline, onOffline) {
         this.context = context;
         this.statusBar = statusBar;
@@ -1869,6 +1909,7 @@ class AuthManager {
         this.apiClient.interceptors.response.use((res) => res, async (error) => {
             if (error.response?.status === 401) {
                 await this.clearToken();
+                await this.setAuthContext(false);
                 this.showSessionExpired();
             }
             return Promise.reject(error);
@@ -1880,9 +1921,16 @@ class AuthManager {
     async activate() {
         // Restore token from secure storage
         this.token = await this.context.secrets.get(TOKEN_KEY);
+        await this.setAuthContext(false);
         // Check backend availability with 2-second timeout
         const online = await this.checkHealth();
         if (online) {
+            if (this.token) {
+                const valid = await this.validateStoredToken();
+                if (!valid) {
+                    await this.clearToken();
+                }
+            }
             this.isOnline = true;
             this.onOnline();
         }
@@ -1902,6 +1950,8 @@ class AuthManager {
         const response = await this.apiClient.post("/auth/login", { email, password });
         const { access_token } = response.data;
         await this.storeToken(access_token);
+        this.isSessionVerified = true;
+        await this.setAuthContext(true);
         vscode.window.showInformationMessage(`Signed in as ${response.data.user.email}`);
     }
     async logout() {
@@ -1910,6 +1960,7 @@ class AuthManager {
         }
         finally {
             await this.clearToken();
+            await this.setAuthContext(false);
             this.statusBar.text = "$(account) Sign in to Intelligent Assistant";
             this.statusBar.command = "project-assistant.login";
             this.statusBar.show();
@@ -1930,7 +1981,24 @@ class AuthManager {
     }
     async clearToken() {
         this.token = undefined;
+        this.isSessionVerified = false;
         await this.context.secrets.delete(TOKEN_KEY);
+    }
+    async validateStoredToken() {
+        try {
+            await this.apiClient.get("/api/users/me");
+            this.isSessionVerified = true;
+            await this.setAuthContext(true);
+            return true;
+        }
+        catch {
+            this.isSessionVerified = false;
+            await this.setAuthContext(false);
+            return false;
+        }
+    }
+    async setAuthContext(authenticated) {
+        await vscode.commands.executeCommand("setContext", "projectAssistant.authenticated", authenticated);
     }
     // ---------------------------------------------------------------------------
     // Health check & offline handling
@@ -2097,7 +2165,8 @@ class ProjectsTreeProvider {
         }
         catch (err) {
             if (err?.response?.status === 401) {
-                this.loadFromCache();
+                this.projects = [];
+                this._onDidChangeTreeData.fire(undefined);
                 return;
             }
             console.error("[ProjectsTreeProvider] Failed to load projects:", err);

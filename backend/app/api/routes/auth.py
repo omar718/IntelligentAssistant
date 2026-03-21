@@ -6,6 +6,7 @@ from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import CurrentUser
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.redis import (
     forgot_limiter,
@@ -57,7 +58,7 @@ REFRESH_COOKIE = "refresh_token"
 COOKIE_OPTIONS = dict(
     key=REFRESH_COOKIE,
     httponly=True,
-    secure=True,
+    secure=not settings.DEBUG,
     samesite="strict",
     max_age=7 * 24 * 3600,  # 7 days in seconds
     path="/auth/refresh",   # Cookie only sent to refresh endpoint

@@ -17,6 +17,7 @@ export class AuthManager {
   private apiClient: AxiosInstance;
   private healthPollTimer: NodeJS.Timeout | undefined;
   private isOnline = false;
+  private isSessionVerified = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -48,6 +49,7 @@ export class AuthManager {
       async (error) => {
         if (error.response?.status === 401) {
           await this.clearToken();
+          await this.setAuthContext(false);
           this.showSessionExpired();
         }
         return Promise.reject(error);
@@ -62,11 +64,19 @@ export class AuthManager {
   async activate(): Promise<void> {
     // Restore token from secure storage
     this.token = await this.context.secrets.get(TOKEN_KEY);
+    await this.setAuthContext(false);
 
     // Check backend availability with 2-second timeout
     const online = await this.checkHealth();
 
     if (online) {
+      if (this.token) {
+        const valid = await this.validateStoredToken();
+        if (!valid) {
+          await this.clearToken();
+        }
+      }
+
       this.isOnline = true;
       this.onOnline();
     } else {
@@ -92,6 +102,8 @@ export class AuthManager {
 
     const { access_token } = response.data;
     await this.storeToken(access_token);
+    this.isSessionVerified = true;
+    await this.setAuthContext(true);
     vscode.window.showInformationMessage(`Signed in as ${response.data.user.email}`);
   }
 
@@ -100,6 +112,7 @@ export class AuthManager {
       await this.apiClient.post("/auth/logout");
     } finally {
       await this.clearToken();
+      await this.setAuthContext(false);
       this.statusBar.text = "$(account) Sign in to Intelligent Assistant";
       this.statusBar.command = "project-assistant.login";
       this.statusBar.show();
@@ -125,7 +138,29 @@ export class AuthManager {
 
   private async clearToken(): Promise<void> {
     this.token = undefined;
+    this.isSessionVerified = false;
     await this.context.secrets.delete(TOKEN_KEY);
+  }
+
+  private async validateStoredToken(): Promise<boolean> {
+    try {
+      await this.apiClient.get("/api/users/me");
+      this.isSessionVerified = true;
+      await this.setAuthContext(true);
+      return true;
+    } catch {
+      this.isSessionVerified = false;
+      await this.setAuthContext(false);
+      return false;
+    }
+  }
+
+  private async setAuthContext(authenticated: boolean): Promise<void> {
+    await vscode.commands.executeCommand(
+      "setContext",
+      "projectAssistant.authenticated",
+      authenticated
+    );
   }
 
   // ---------------------------------------------------------------------------

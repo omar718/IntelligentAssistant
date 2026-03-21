@@ -70,7 +70,8 @@ export class ProjectsTreeProvider implements vscode.TreeDataProvider<ProjectItem
       this._onDidChangeTreeData.fire(undefined);
     } catch (err: any) {
       if (err?.response?.status === 401) {
-        this.loadFromCache();
+        this.projects = [];
+        this._onDidChangeTreeData.fire(undefined);
         return;
       }
       console.error("[ProjectsTreeProvider] Failed to load projects:", err);

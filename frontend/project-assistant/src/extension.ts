@@ -56,16 +56,12 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
     if (authManager.isAuthenticated()) {
       await treeProvider.loadFromApi(authManager.getApiClient());
     } else {
+      await treeProvider.clearProjects(false);
       vscode.commands.executeCommand('project-assistant.login');
     }
   };
 
   const onOffline = () => {
-    if (authManager?.isAuthenticated()) {
-      treeProvider.loadFromCache();
-      return;
-    }
-
     void treeProvider.clearProjects(false);
   };
 
@@ -79,20 +75,45 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
 
   // ─── Folder Callbacks ─────────────────────────────────────────────────────
   registerOpenFolderCallback((folderPath: string) => {
-    const uri = vscode.Uri.file(folderPath);
-    vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
+    try {
+      const uri = vscode.Uri.file(folderPath);
+      void vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
+    } catch (err: any) {
+      console.error('Error in openFolderCallback:', err);
+      vscode.window.showErrorMessage(`Error opening folder: ${err?.message || 'Unknown error'}`);
+    }
   });
 
   registerPickFolderCallback(async () => {
-    const uris = await vscode.window.showOpenDialog({
-      canSelectFiles: false,
-      canSelectFolders: true,
-      canSelectMany: false,
-      openLabel: 'Select clone destination',
-      title: 'Where should the repository be cloned?',
-      defaultUri: vscode.Uri.file(os.homedir()),
-    });
-    return uris && uris.length > 0 ? uris[0].fsPath : null;
+    try {
+      // Add a timeout to prevent hanging
+      const timeoutPromise = new Promise<null>((resolve) => {
+        setTimeout(() => {
+          console.warn('Folder picker timeout - returning null');
+          resolve(null);
+        }, 60000); // 60 second timeout
+      });
+
+      const pickerPromise = (async () => {
+        const uris = await vscode.window.showOpenDialog({
+          canSelectFiles: false,
+          canSelectFolders: true,
+          canSelectMany: false,
+          openLabel: 'Select clone destination',
+          title: 'Where should the repository be cloned?',
+          defaultUri: vscode.Uri.file(os.homedir()),
+        });
+        console.log('Folder picker result:', uris);
+        return uris && uris.length > 0 ? uris[0].fsPath : null;
+      })();
+
+      const result = await Promise.race([pickerPromise, timeoutPromise]);
+      return result;
+    } catch (err: any) {
+      console.error('Folder picker error:', err);
+      vscode.window.showErrorMessage(`Folder picker error: ${err.message}`);
+      return null;
+    }
   });
 
   // ─── Auto-start Server ────────────────────────────────────────────────────
@@ -162,48 +183,63 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
     }),
 
     vscode.commands.registerCommand('project-assistant.login', async () => {
-      const email = await vscode.window.showInputBox({
-        prompt: 'Enter your email',
-        placeHolder: 'you@example.com',
-        ignoreFocusOut: true,
-      });
-      if (!email) {
-        return;
-      }
-
-      const password = await vscode.window.showInputBox({
-        prompt: 'Enter your password',
-        password: true,
-        ignoreFocusOut: true,
-      });
-      if (!password) {
-        return;
-      }
-
       try {
+        const email = await vscode.window.showInputBox({
+          prompt: 'Enter your email',
+          placeHolder: 'you@example.com',
+          ignoreFocusOut: true,
+        });
+        if (!email) {
+          return { success: false, cancelled: true };
+        }
+
+        const password = await vscode.window.showInputBox({
+          prompt: 'Enter your password',
+          password: true,
+          ignoreFocusOut: true,
+        });
+        if (!password) {
+          return { success: false, cancelled: true };
+        }
+
         await authManager.login(email, password);
         await onOnline();
         vscode.window.showInformationMessage('Successfully signed in!');
+        return { success: true };
       } catch (err: any) {
         const msg =
           err?.response?.status === 401
             ? 'Invalid email or password'
             : 'Login failed. Check the backend is running.';
         vscode.window.showErrorMessage(msg);
+        return { success: false, error: msg };
       }
     }),
 
     vscode.commands.registerCommand('project-assistant.logout', async () => {
-      await authManager.logout();
-      await treeProvider.clearProjects(true);
+      try {
+        await authManager.logout();
+        await treeProvider.clearProjects(true);
+        return { success: true };
+      } catch (err: any) {
+        vscode.window.showErrorMessage('Logout failed');
+        return { success: false, error: err?.message };
+      }
     }),
 
     vscode.commands.registerCommand('project-assistant.retryConnection', async () => {
-      const online = await authManager.checkHealth();
-      if (online) {
-        onOnline();
-      } else {
-        vscode.window.showWarningMessage('Backend still offline. Is the server running?');
+      try {
+        const online = await authManager.checkHealth();
+        if (online) {
+          onOnline();
+          return { success: true, online: true };
+        } else {
+          vscode.window.showWarningMessage('Backend still offline. Is the server running?');
+          return { success: false, online: false };
+        }
+      } catch (err: any) {
+        vscode.window.showErrorMessage('Connection check failed');
+        return { success: false, error: err?.message };
       }
     }),
 
