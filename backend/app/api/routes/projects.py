@@ -3,17 +3,19 @@ import logging
 import os
 import uuid
 import subprocess
+import re
+import threading
+import time
+from queue import Queue, Empty
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict, Any
 from app.core.analysis.project_analyzer import ProjectAnalyzer
 from app.core.analysis.nlp_processor import NLPProcessor
-from app.db.session import get_db
-from app.core.database import get_db as get_async_db
+from app.core.database import get_db                     # ← one import, always async
 from app.api.dependencies import CurrentUser
 from app.db.crud import project_crud
 from app.models.project import Project, ProjectStatus
@@ -24,13 +26,9 @@ router = APIRouter()
 analyzer = ProjectAnalyzer()
 nlp = NLPProcessor()
 
-# Container path where repos are cloned (must be a bind-mounted host directory)
 CLONE_BASE_DIR = Path(os.getenv("CLONE_BASE_DIR", "/tmp/intelligent-assistant"))
-# Matching path on the Windows host (used so the browser can open VS Code)
 HOST_CLONE_BASE_DIR = os.getenv("HOST_CLONE_BASE_DIR", "C:/tmp/intelligent-assistant")
 
-# Additional path mappings: (host_prefix, container_prefix)
-# Each entry allows users to pick any folder within that host directory.
 PATH_MAPPINGS = [
     (
         os.getenv("HOST_USERS_DIR", "C:/Users").replace("\\", "/").rstrip("/"),
@@ -42,8 +40,41 @@ PATH_MAPPINGS = [
     ),
 ]
 
+TASK_PROGRESS: Dict[str, Dict[str, Any]] = {}
+TASK_PROGRESS_LOCK = threading.Lock()
+
+
+def set_task_progress(
+    task_id: str,
+    *,
+    stage: str,
+    progress: float,
+    message: Optional[str] = None,
+    done: bool = False,
+    error: Optional[str] = None,
+    project_id: Optional[str] = None,
+    host_path: Optional[str] = None,
+):
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "stage": stage,
+        "progress": max(0.0, min(100.0, float(progress))),
+        "message": message,
+        "done": done,
+        "error": error,
+    }
+    if project_id:
+        payload["project_id"] = project_id
+    if host_path:
+        payload["host_path"] = host_path
+
+    with TASK_PROGRESS_LOCK:
+        previous = TASK_PROGRESS.get(task_id, {})
+        if previous.get("done"):
+            return
+        TASK_PROGRESS[task_id] = payload
+
 def host_path_to_container(host_path: str) -> Path:
-    """Translate a Windows host path to its bind-mounted container equivalent."""
     norm = host_path.replace("\\", "/").rstrip("/")
     for host_prefix, container_prefix in PATH_MAPPINGS:
         if norm.lower().startswith(host_prefix.lower()):
@@ -56,7 +87,6 @@ def host_path_to_container(host_path: str) -> Path:
     )
 
 def container_path_to_host(container_path: Path) -> str:
-    """Translate a container path back to its Windows host equivalent."""
     norm = str(container_path).replace("\\", "/")
     for host_prefix, container_prefix in PATH_MAPPINGS:
         cp = container_prefix.rstrip("/")
@@ -64,31 +94,43 @@ def container_path_to_host(container_path: Path) -> str:
             relative = norm[len(cp):].lstrip("/")
             host = host_prefix + ("/" + relative if relative else "")
             return host.replace("/", "\\")
-    # fallback
     return norm.replace("/", "\\")
 
 class ProjectSource(BaseModel):
-    type: str            # "git" or "local"
-    url: Optional[str]=None   # if git
-    path: Optional[str] = None  # if local (from VS Code extension)
-    clone_dir: Optional[str] = None  # desired clone destination (Windows host path)
+    type: str
+    url: Optional[str] = None
+    path: Optional[str] = None
+    clone_dir: Optional[str] = None
+    model_config = {"extra": "allow"}
 
-    model_config = {"extra":"allow"}
 class CreateProjectRequest(BaseModel):
     source: ProjectSource
+    task_id: Optional[str] = None
 
 @router.post("/api/projects")
-async def create_project(req: CreateProjectRequest, db: Session = Depends(get_db)):
+async def create_project(
+    req: CreateProjectRequest,
+    current_user: CurrentUser,              # use auth dependency
+    db: AsyncSession = Depends(get_db),
+):
     project_id = f"proj_{uuid.uuid4().hex[:8]}"
-    task_id = f"task_{uuid.uuid4().hex[:8]}"
+    task_id = req.task_id or f"task_{uuid.uuid4().hex[:8]}"
     project_path = None
+    logger.info("current_user: %s", current_user)  # ← add this
+    logger.info("current_user.id: %s", current_user.id)  # ← and this
+
+    set_task_progress(
+        task_id,
+        stage="queued",
+        progress=1,
+        message="Queued",
+    )
+
 
     try:
-        # Determine project path
         if req.source.type == "git":
             if not req.source.url:
                 raise HTTPException(status_code=400, detail="url is required for git source")
-            # Resolve the container-side base directory from the optional host clone_dir
             if req.source.clone_dir:
                 try:
                     target_base = host_path_to_container(req.source.clone_dir)
@@ -96,9 +138,14 @@ async def create_project(req: CreateProjectRequest, db: Session = Depends(get_db
                     raise HTTPException(status_code=400, detail=str(e))
             else:
                 target_base = CLONE_BASE_DIR
-            # Run blocking git clone in a thread so the server stays responsive
+            set_task_progress(
+                task_id,
+                stage="cloning",
+                progress=5,
+                message="Cloning repository...",
+            )
             loop = asyncio.get_event_loop()
-            project_path = await loop.run_in_executor(None, _clone_repo, req.source.url, target_base)
+            project_path = await loop.run_in_executor(None, _clone_repo, req.source.url, target_base, task_id)
 
         elif req.source.type == "local":
             if not req.source.path:
@@ -106,10 +153,22 @@ async def create_project(req: CreateProjectRequest, db: Session = Depends(get_db
             project_path = Path(req.source.path)
             if not project_path.exists():
                 raise HTTPException(status_code=400, detail="path does not exist")
+            set_task_progress(
+                task_id,
+                stage="cloning",
+                progress=70,
+                message="Using local source...",
+            )
         else:
             raise HTTPException(status_code=400, detail="invalid source type")
 
-        # Analyze (NLP call is blocking — run in executor too)
+        set_task_progress(
+            task_id,
+            stage="analyzing",
+            progress=78,
+            message="Analyzing project...",
+        )
+
         loop = asyncio.get_event_loop()
         logger.info("Analyzing project at %s", project_path)
         try:
@@ -119,19 +178,30 @@ async def create_project(req: CreateProjectRequest, db: Session = Depends(get_db
             raise HTTPException(status_code=500, detail=f"Project analysis failed: {e}")
 
         try:
+            set_task_progress(
+                task_id,
+                stage="analyzing",
+                progress=86,
+                message="Parsing README instructions...",
+            )
             nlp_result = await loop.run_in_executor(None, nlp.parse_readme, project_path)
             info = nlp.merge_with_project_info(info, nlp_result)
         except Exception as e:
             logger.warning("NLP analysis failed (non-fatal): %s", e)
-            # NLP failure is non-fatal — continue with what we have
 
-        # Persist to DB
         project_name = Path(str(project_path)).name
         logger.info("Saving project '%s' to database", project_name)
         try:
-            project_crud.create(db, {
+            set_task_progress(
+                task_id,
+                stage="analyzing",
+                progress=93,
+                message="Saving project metadata...",
+            )
+            await project_crud.create(db, {       # ← await added
                 "id": project_id,
                 "name": project_name,
+                "user_id": current_user.id,      # <-- added user_id
                 "type": info.primary_language,
                 "path": str(project_path),
                 "status": ProjectStatus.queued,
@@ -147,8 +217,16 @@ async def create_project(req: CreateProjectRequest, db: Session = Depends(get_db
             logger.exception("Database insert failed: %s", e)
             raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
-        # Convert the container path to its Windows host equivalent
         host_path = container_path_to_host(project_path)
+        set_task_progress(
+            task_id,
+            stage="launching",
+            progress=100,
+            message="Clone and analysis complete.",
+            done=True,
+            project_id=project_id,
+            host_path=host_path,
+        )
 
         return {
             "project_id": project_id,
@@ -164,16 +242,47 @@ async def create_project(req: CreateProjectRequest, db: Session = Depends(get_db
         }
 
     except HTTPException:
+        set_task_progress(
+            task_id,
+            stage="failed",
+            progress=100,
+            message="Project creation failed.",
+            done=True,
+            error="request_failed",
+        )
         raise
     except Exception as e:
         logger.exception("Unexpected error in create_project: %s", e)
+        set_task_progress(
+            task_id,
+            stage="failed",
+            progress=100,
+            message="Project creation failed.",
+            done=True,
+            error=str(e),
+        )
         raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+
+
+@router.get("/api/projects/tasks/{task_id}")
+async def get_project_task_status(
+    task_id: str,
+    current_user: CurrentUser,
+):
+    with TASK_PROGRESS_LOCK:
+        task = TASK_PROGRESS.get(task_id)
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    return task
+
 
 @router.get("/api/projects/{project_id}")
 async def get_project(
     project_id: str,
     current_user: CurrentUser,
-    db: AsyncSession = Depends(get_async_db),
+    db: AsyncSession = Depends(get_db),    # ← same get_db, no alias needed
 ):
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
@@ -190,16 +299,131 @@ async def get_project(
         "metadata": project.metadata_,
     }
 
-def _clone_repo(git_url: str, base_dir: Path = None) -> Path:
+#------------------------------------------------
+# GET api/user/me/projects is defined in auth.py
+#------------------------------------------------
+
+def _update_git_phase_progress(task_id: Optional[str], base: int, span: int, line: str) -> Optional[float]:
+    if not task_id:
+        return None
+
+    cleaned = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line).strip()
+    if not cleaned:
+        return None
+
+    match = re.search(r"(\d{1,3})%", cleaned)
+    if not match:
+        return None
+
+    raw_percent = max(0, min(100, int(match.group(1))))
+    progress_value = base + (span * raw_percent / 100.0)
+    set_task_progress(
+        task_id,
+        stage="cloning",
+        progress=progress_value,
+        message=cleaned,
+    )
+    return progress_value
+
+
+def _run_git_with_progress(cmd: list[str], task_id: Optional[str], base: int, span: int, start_message: str):
+    if task_id:
+        set_task_progress(task_id, stage="cloning", progress=base, message=start_message)
+    current_progress = float(base)
+    last_heartbeat = time.monotonic()
+
+    output_queue: Queue[tuple[str, str]] = Queue()
+
+    def _reader(stream, stream_name: str):
+        if stream is None:
+            output_queue.put((stream_name, "__EOF__"))
+            return
+
+        buffer = ""
+        try:
+            while True:
+                char = stream.read(1)
+                if not char:
+                    if buffer:
+                        output_queue.put((stream_name, buffer))
+                    break
+                if char in ("\r", "\n"):
+                    if buffer:
+                        output_queue.put((stream_name, buffer))
+                        buffer = ""
+                else:
+                    buffer += char
+        finally:
+            output_queue.put((stream_name, "__EOF__"))
+
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        universal_newlines=True,
+        bufsize=1,
+    )
+
+    stderr_thread = threading.Thread(target=_reader, args=(process.stderr, "stderr"), daemon=True)
+    stdout_thread = threading.Thread(target=_reader, args=(process.stdout, "stdout"), daemon=True)
+    stderr_thread.start()
+    stdout_thread.start()
+
+    eof_count = 0
+    while eof_count < 2:
+        now = time.monotonic()
+        if task_id and process.poll() is None and now - last_heartbeat >= 1.0:
+            max_fallback = float(base + span - 2)
+            if current_progress < max_fallback:
+                current_progress = min(max_fallback, current_progress + 1)
+                set_task_progress(
+                    task_id,
+                    stage="cloning",
+                    progress=current_progress,
+                    message="Cloning repository...",
+                )
+            last_heartbeat = now
+
+        try:
+            _, chunk = output_queue.get(timeout=0.2)
+        except Empty:
+            if process.poll() is not None and not (stderr_thread.is_alive() or stdout_thread.is_alive()):
+                break
+            continue
+
+        if chunk == "__EOF__":
+            eof_count += 1
+            continue
+
+        parsed_progress = _update_git_phase_progress(task_id, base, span, chunk)
+        if parsed_progress is not None:
+            current_progress = max(current_progress, parsed_progress)
+            last_heartbeat = time.monotonic()
+
+    stderr_thread.join(timeout=1)
+    stdout_thread.join(timeout=1)
+
+    return_code = process.wait()
+    if return_code != 0:
+        raise subprocess.CalledProcessError(return_code, cmd)
+
+    if task_id:
+        set_task_progress(
+            task_id,
+            stage="cloning",
+            progress=base + span,
+            message="Repository fetched.",
+        )
+
+
+def _clone_repo(git_url: str, base_dir: Path = None, task_id: Optional[str] = None) -> Path:
     clone_base = base_dir if base_dir is not None else CLONE_BASE_DIR
     clone_base.mkdir(parents=True, exist_ok=True)
     repo_name = git_url.rstrip('/').split('/')[-1].removesuffix('.git')
     target = clone_base / repo_name
-
     if target.exists():
-        # Already cloned, just pull latest
-        subprocess.run(['git', '-C', str(target), 'pull'], check=True)
+        _run_git_with_progress(['git', '-C', str(target), 'pull', '--progress'], task_id, 10, 60, 'Updating existing repository...')
     else:
-        subprocess.run(['git', 'clone', git_url, str(target)], check=True)
-
+        _run_git_with_progress(['git', 'clone', '--progress', git_url, str(target)], task_id, 10, 60, 'Cloning repository...')
     return target

@@ -78,12 +78,17 @@ export const authApi = {
 
 export const projectsApi = {
   // Launch a new project from a GitHub URL
-  create: (data: { source: { type: string; url?: string; path?: string; clone_dir?: string } }) =>
+  create: (data: { source: { type: string; url?: string; path?: string; clone_dir?: string }; task_id?: string }) =>
     api.post('/api/projects', data).then(r => r.data),
+  
 
   // Get a single project by ID
   get: (id: string) =>
     api.get(`/api/projects/${id}`).then(r => r.data),
+
+  // Get live status for a project creation task
+  getTaskStatus: (taskId: string) =>
+    api.get(`/api/projects/tasks/${taskId}`).then(r => r.data),
 };
 
 // ── User API ───────────────────────────────────────────────────────────────────
@@ -108,3 +113,33 @@ export const healthApi = {
   check: () =>
     api.get('/health').then(r => r.data),
 };
+
+// Response interceptor
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+
+    // If the error is 401 and it's NOT a login/refresh attempt
+    if (error.response?.status === 401 && !originalRequest._retry && !originalRequest.url.includes('/auth/')) {
+      originalRequest._retry = true;
+
+      try {
+        console.log("Token expired. Attempting silent refresh...");
+        const data = await authApi.refresh();
+        
+        // Update the failed request with the NEW token
+        originalRequest.headers.Authorization = `Bearer ${data.access_token}`;
+        
+        // Retry the original request
+        return api(originalRequest);
+      } catch (refreshErr) {
+        console.error("Refresh token also expired. Logging out.");
+        clearToken();
+        window.location.href = '/login'; 
+        return Promise.reject(refreshErr);
+      }
+    }
+    return Promise.reject(error);
+  }
+);

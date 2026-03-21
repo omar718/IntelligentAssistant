@@ -1,36 +1,25 @@
 import os
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
-from typing import Generator
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from typing import AsyncGenerator
 
-# Get database URL from environment variable
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://postgres:postgres@localhost:5432/intelligent_assistant"
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/intelligent_assistant"
 )
 
-# Create engine
-engine = create_engine(
+engine = create_async_engine(
     DATABASE_URL,
-    pool_pre_ping=True,  # Verify connections are alive before using them
-    echo=False,  # Set to True for SQL debugging
+    pool_pre_ping=True,
+    echo=False,
 )
 
-# Create session factory
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
-
-def get_db() -> Generator[Session, None, None]:
-    """
-    Dependency for FastAPI to get database session.
-
-    Usage in FastAPI:
-    @router.get("/items")
-    def get_items(db: Session = Depends(get_db)):
-        ...
-    """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with SessionLocal() as db:
+        try:
+            yield db
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise

@@ -163,12 +163,29 @@
   animation: pulse 1s infinite;
 }
 
+.in-progress-blink {
+  margin-top: 1.5rem;
+  font-size: 1.1rem;
+  color: #fff;
+  font-weight: 700;
+  animation: blink-on-off 0.9s steps(1, end) infinite;
+}
+
 @keyframes pulse {
   0%, 100% {
     opacity: 1;
   }
   50% {
     opacity: 0.6;
+  }
+}
+
+@keyframes blink-on-off {
+  0%, 49% {
+    opacity: 1;
+  }
+  50%, 100% {
+    opacity: 0;
   }
 }
 
