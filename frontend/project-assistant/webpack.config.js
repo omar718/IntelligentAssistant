@@ -1,8 +1,10 @@
+/// <reference types="node" />
 //@ts-check
 
 'use strict';
 
 const path = require('path');
+const webpack = require('webpack');
 
 //@ts-check
 /** @typedef {import('webpack').Configuration} WebpackConfig **/
@@ -20,7 +22,8 @@ const extensionConfig = {
     libraryTarget: 'commonjs2'
   },
   externals: {
-    vscode: 'commonjs vscode' // the vscode-module is created on-the-fly and must be excluded. Add other modules that cannot be webpack'ed, 📖 -> https://webpack.js.org/configuration/externals/
+    vscode: 'commonjs vscode', // the vscode-module is created on-the-fly and must be excluded. Add other modules that cannot be webpack'ed, 📖 -> https://webpack.js.org/configuration/externals/
+    axios: 'commonjs axios'
     // modules added here also need to be added in the .vscodeignore file
   },
   resolve: {
@@ -40,7 +43,40 @@ const extensionConfig = {
       }
     ]
   },
-  devtool: 'nosources-source-map',
+  devtool: false,
+  plugins: [
+    new webpack.BannerPlugin({
+      raw: true,
+      footer: true,
+      banner: '',
+      test: /extension\.js$/,
+      stage: webpack.Compilation.PROCESS_ASSETS_STAGE_OPTIMIZE,
+    }),
+    {
+      apply(compiler) {
+        compiler.hooks.compilation.tap('StripAxiosSourceMapCommentPlugin', (compilation) => {
+          compilation.hooks.processAssets.tap(
+            {
+              name: 'StripAxiosSourceMapCommentPlugin',
+              stage: webpack.Compilation.PROCESS_ASSETS_STAGE_OPTIMIZE,
+            },
+            (assets) => {
+              const assetName = 'extension.js';
+              const asset = assets[assetName];
+              if (!asset) return;
+
+              const source = asset.source().toString();
+              const cleaned = source.replace(/\n\/\/# sourceMappingURL=axios\.cjs\.map\s*$/m, '');
+
+              if (cleaned !== source) {
+                compilation.updateAsset(assetName, new webpack.sources.RawSource(cleaned));
+              }
+            }
+          );
+        });
+      },
+    },
+  ],
   infrastructureLogging: {
     level: "log", // enables logging required for problem matchers
   },

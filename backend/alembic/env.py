@@ -6,6 +6,7 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '../.env'))
+load_dotenv(os.path.join(os.path.dirname(__file__), '../.env.local'), override=True)
 
 config = context.config
 
@@ -16,6 +17,8 @@ database_url = os.getenv(
     "DATABASE_URL",
     "postgresql://postgres:postgres@localhost:5432/intelligent_assistant"
 )
+# Alembic uses a sync driver; strip +asyncpg if present
+database_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
 config.set_main_option('sqlalchemy.url', database_url)
 
 target_metadata = Base.metadata

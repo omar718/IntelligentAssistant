@@ -46,60 +46,114 @@ const os = __importStar(__webpack_require__(2));
 const chatViewProvider_1 = __webpack_require__(3);
 const server_1 = __webpack_require__(6);
 const llmService_1 = __webpack_require__(5);
-function activate(context) {
-    vscode.window.showInformationMessage('Project Assistant activated');
+const authManager_1 = __webpack_require__(8);
+const ProjectsTreeProvider_1 = __webpack_require__(10);
+let authManager;
+let treeProvider;
+async function activate(context) {
+    // ─── Output Channel ───────────────────────────────────────────────────────
     const outputChannel = vscode.window.createOutputChannel('Project Assistant API');
     context.subscriptions.push(outputChannel);
+    // ─── Status Bar ───────────────────────────────────────────────────────────
+    const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    context.subscriptions.push(statusBar);
+    // ─── Projects Tree View ───────────────────────────────────────────────────
+    treeProvider = new ProjectsTreeProvider_1.ProjectsTreeProvider(context);
+    vscode.window.registerTreeDataProvider('projectAssistant.projects', treeProvider);
+    // ─── API Info Helper ──────────────────────────────────────────────────────
     const showApiInfo = (port) => {
         outputChannel.clear();
         outputChannel.appendLine(`URL: http://localhost:${port}/Mobelite/chat`);
         outputChannel.appendLine(' Method: POST');
         outputChannel.appendLine('--------------------------------------------------');
         outputChannel.appendLine('Request Body (JSON):');
-        outputChannel.appendLine(JSON.stringify({
-            prompt: 'Your prompt here...',
-        }, null, 2));
+        outputChannel.appendLine(JSON.stringify({ prompt: 'Your prompt here...' }, null, 2));
         outputChannel.appendLine('--------------------------------------------------');
         outputChannel.appendLine('Expected Response (JSON):');
-        outputChannel.appendLine(JSON.stringify({
-            result: 'The refined or generated response text.',
-        }, null, 2));
+        outputChannel.appendLine(JSON.stringify({ result: 'The refined or generated response text.' }, null, 2));
         outputChannel.appendLine('--------------------------------------------------');
         outputChannel.show();
     };
-    context.subscriptions.push(vscode.commands.registerCommand('project-assistant.showApiInfo', (port) => {
-        showApiInfo(port || 6009);
-    }));
-    (0, llmService_1.getAvailableModels)().catch(console.error);
-    // Register the open-folder handler — opens a path in a new VS Code window
-    (0, server_1.registerOpenFolderCallback)((folderPath) => {
-        const uri = vscode.Uri.file(folderPath);
-        vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
-    });
-    // Register the pick-folder handler — opens native folder picker dialog
-    (0, server_1.registerPickFolderCallback)(async () => {
-        const uris = await vscode.window.showOpenDialog({
-            canSelectFiles: false,
-            canSelectFolders: true,
-            canSelectMany: false,
-            openLabel: 'Select clone destination',
-            title: 'Where should the repository be cloned?',
-            defaultUri: vscode.Uri.file(os.homedir()),
-        });
-        if (uris && uris.length > 0) {
-            return uris[0].fsPath;
+    // ─── Online / Offline Callbacks ───────────────────────────────────────────
+    const onOnline = async () => {
+        statusBar.text = '$(check) Assistant ready';
+        statusBar.backgroundColor = undefined;
+        statusBar.command = 'project-assistant.openChat';
+        statusBar.show();
+        if (authManager.isAuthenticated()) {
+            await treeProvider.loadFromApi(authManager.getApiClient());
         }
-        return null;
+        else {
+            await treeProvider.clearProjects(false);
+            vscode.commands.executeCommand('project-assistant.login');
+        }
+    };
+    const onOffline = () => {
+        void treeProvider.clearProjects(false);
+    };
+    // ─── Auth Manager ─────────────────────────────────────────────────────────
+    authManager = new authManager_1.AuthManager(context, statusBar, onOnline, onOffline);
+    // ─── Auto-Launch Logic ────────────────────────────────────────────────────
+    if (!authManager.isAuthenticated()) {
+        showOptionalLoginPrompt();
+    }
+    // ─── Folder Callbacks ─────────────────────────────────────────────────────
+    (0, server_1.registerOpenFolderCallback)((folderPath) => {
+        try {
+            const uri = vscode.Uri.file(folderPath);
+            void vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
+        }
+        catch (err) {
+            console.error('Error in openFolderCallback:', err);
+            vscode.window.showErrorMessage(`Error opening folder: ${err?.message || 'Unknown error'}`);
+        }
     });
-    // Auto-start the server on activation
-    (0, server_1.startServer)(6009).then((port) => {
+    (0, server_1.registerPickFolderCallback)(async () => {
+        try {
+            // Add a timeout to prevent hanging
+            const timeoutPromise = new Promise((resolve) => {
+                setTimeout(() => {
+                    console.warn('Folder picker timeout - returning null');
+                    resolve(null);
+                }, 60000); // 60 second timeout
+            });
+            const pickerPromise = (async () => {
+                const uris = await vscode.window.showOpenDialog({
+                    canSelectFiles: false,
+                    canSelectFolders: true,
+                    canSelectMany: false,
+                    openLabel: 'Select clone destination',
+                    title: 'Where should the repository be cloned?',
+                    defaultUri: vscode.Uri.file(os.homedir()),
+                });
+                console.log('Folder picker result:', uris);
+                return uris && uris.length > 0 ? uris[0].fsPath : null;
+            })();
+            const result = await Promise.race([pickerPromise, timeoutPromise]);
+            return result;
+        }
+        catch (err) {
+            console.error('Folder picker error:', err);
+            vscode.window.showErrorMessage(`Folder picker error: ${err.message}`);
+            return null;
+        }
+    });
+    // ─── Auto-start Server ────────────────────────────────────────────────────
+    (0, server_1.startServer)(6009)
+        .then((port) => {
         outputChannel.appendLine(`Project Assistant server auto-started on port ${port}`);
-    }).catch((err) => {
+    })
+        .catch((err) => {
         if (!err.message.includes('already running')) {
             vscode.window.showWarningMessage(`Project Assistant: server could not start — ${err.message}`);
         }
     });
-    context.subscriptions.push(vscode.commands.registerCommand('project-assistant.startServer', async (port, modelId) => {
+    // ─── Pre-fetch Models ─────────────────────────────────────────────────────
+    (0, llmService_1.getAvailableModels)().catch(console.error);
+    // ─── Commands ─────────────────────────────────────────────────────────────
+    context.subscriptions.push(vscode.commands.registerCommand('project-assistant.showApiInfo', (port) => {
+        showApiInfo(port || 6009);
+    }), vscode.commands.registerCommand('project-assistant.startServer', async (port, modelId) => {
         try {
             const actualPort = await (0, server_1.startServer)(port, modelId);
             vscode.window
@@ -116,8 +170,7 @@ function activate(context) {
             vscode.window.showErrorMessage(`Failed to start server: ${error.message}`);
             return { success: false, error: error.message };
         }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('project-assistant.stopServer', async () => {
+    }), vscode.commands.registerCommand('project-assistant.stopServer', async () => {
         try {
             await (0, server_1.stopServer)();
             vscode.window.showInformationMessage('Project Assistant Server stopped');
@@ -128,25 +181,103 @@ function activate(context) {
             vscode.window.showErrorMessage(`Failed to stop server: ${error.message}`);
             return { success: false, error: error.message };
         }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('project-assistant.getModels', async () => {
-        const models = await (0, llmService_1.getAvailableModels)();
-        return models;
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('project-assistant.getServerStatus', () => {
+    }), vscode.commands.registerCommand('project-assistant.getModels', async () => {
+        return await (0, llmService_1.getAvailableModels)();
+    }), vscode.commands.registerCommand('project-assistant.getServerStatus', () => {
         return { running: (0, server_1.isServerRunning)() };
-    }));
-    const provider = new chatViewProvider_1.ChatViewProvider(context.extensionUri);
-    context.subscriptions.push(vscode.window.registerWebviewViewProvider(chatViewProvider_1.ChatViewProvider.viewType, provider, {
-        webviewOptions: {
-            retainContextWhenHidden: true,
-        },
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('project-assistant.openAssistant', () => {
+    }), vscode.commands.registerCommand('project-assistant.inspectAuthState', async () => {
+        try {
+            const hasStoredToken = await authManager.hasStoredToken();
+            const hasInMemoryToken = authManager.isAuthenticated();
+            const summary = `Auth state — keychain: ${hasStoredToken ? 'present' : 'missing'}, memory: ${hasInMemoryToken ? 'present' : 'missing'}`;
+            vscode.window.showInformationMessage(summary);
+            return {
+                success: true,
+                hasStoredToken,
+                hasInMemoryToken,
+            };
+        }
+        catch (err) {
+            const message = err?.message || 'Failed to inspect auth state';
+            vscode.window.showErrorMessage(message);
+            return { success: false, error: message };
+        }
+    }), vscode.commands.registerCommand('project-assistant.login', async () => {
+        try {
+            const email = await vscode.window.showInputBox({
+                prompt: 'Enter your email',
+                placeHolder: 'you@example.com',
+                ignoreFocusOut: true,
+            });
+            if (!email) {
+                return { success: false, cancelled: true };
+            }
+            const password = await vscode.window.showInputBox({
+                prompt: 'Enter your password',
+                password: true,
+                ignoreFocusOut: true,
+            });
+            if (!password) {
+                return { success: false, cancelled: true };
+            }
+            await authManager.login(email, password);
+            await onOnline();
+            vscode.window.showInformationMessage('Successfully signed in!');
+            return { success: true };
+        }
+        catch (err) {
+            const msg = err?.response?.status === 401
+                ? 'Invalid email or password'
+                : 'Login failed. Check the backend is running.';
+            vscode.window.showErrorMessage(msg);
+            return { success: false, error: msg };
+        }
+    }), vscode.commands.registerCommand('project-assistant.logout', async () => {
+        try {
+            await authManager.logout();
+            await treeProvider.clearProjects(true);
+            return { success: true };
+        }
+        catch (err) {
+            vscode.window.showErrorMessage('Logout failed');
+            return { success: false, error: err?.message };
+        }
+    }), vscode.commands.registerCommand('project-assistant.retryConnection', async () => {
+        try {
+            const online = await authManager.checkHealth();
+            if (online) {
+                onOnline();
+                return { success: true, online: true };
+            }
+            else {
+                vscode.window.showWarningMessage('Backend still offline. Is the server running?');
+                return { success: false, online: false };
+            }
+        }
+        catch (err) {
+            vscode.window.showErrorMessage('Connection check failed');
+            return { success: false, error: err?.message };
+        }
+    }), vscode.commands.registerCommand('project-assistant.openAssistant', () => {
         vscode.commands.executeCommand('workbench.view.extension.project-assistant-sidebar');
     }));
+    // ─── Chat Webview ─────────────────────────────────────────────────────────
+    const provider = new chatViewProvider_1.ChatViewProvider(context.extensionUri);
+    context.subscriptions.push(vscode.window.registerWebviewViewProvider(chatViewProvider_1.ChatViewProvider.viewType, provider, {
+        webviewOptions: { retainContextWhenHidden: true },
+    }));
+    // ─── Activate Auth ────────────────────────────────────────────────────────
+    await authManager.activate();
+    vscode.window.showInformationMessage('Project Assistant activated');
+} // ← closing brace for activate()
+async function showOptionalLoginPrompt() {
+    const selection = await vscode.window.showInformationMessage("Welcome! Would you like to log in to sync your projects with DevLauncher?", "Log In", "Maybe Later");
+    if (selection === "Log In") {
+        vscode.commands.executeCommand('project-assistant.login');
+    }
 }
 function deactivate() {
+    authManager?.deactivate();
     return (0, server_1.stopServer)();
 }
 
@@ -405,6 +536,14 @@ class ChatViewProvider {
                     color: var(--vscode-descriptionForeground);
                 }
 
+                .or-drop-label {
+                    font-size: 12px;
+                    color: var(--vscode-descriptionForeground);
+                    text-align: center;
+                    margin: 6px 0;
+                    opacity: 0.7;
+                }
+
                 #steps-file-input {
                     display: none;
                 }
@@ -448,6 +587,29 @@ class ChatViewProvider {
                 }
 
                 .analyse-btn:active {
+                    transform: scale(0.98);
+                }
+
+                .analyse-file-btn {
+                    width: 100%;
+                    margin-top: 10px;
+                    padding: 8px;
+                    border: 1px solid var(--primary-color);
+                    border-radius: 6px;
+                    background: transparent;
+                    color: var(--primary-color);
+                    font-weight: 600;
+                    font-size: 13px;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+
+                .analyse-file-btn:hover {
+                    background: rgba(0, 132, 255, 0.1);
+                    box-shadow: 0 2px 6px rgba(0, 132, 255, 0.2);
+                }
+
+                .analyse-file-btn:active {
                     transform: scale(0.98);
                 }
 
@@ -514,14 +676,116 @@ class ChatViewProvider {
                     border-radius: 12px;
                 }
 
+                .message-time {
+                    font-size: 10px;
+                    color: var(--vscode-descriptionForeground);
+                    opacity: 0.6;
+                    margin-top: 3px;
+                    padding: 0 4px;
+                }
+
+                /* ── History drawer ── */
+                .history-drawer {
+                    display: none;
+                    flex-direction: column;
+                    background: var(--vscode-sideBar-background);
+                    border-top: 1px solid var(--vscode-panel-border);
+                    flex-shrink: 0;
+                    max-height: 240px;
+                    overflow-y: auto;
+                }
+
+                .history-drawer.open {
+                    display: flex;
+                }
+
+                .history-header {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    padding: 8px 14px;
+                    font-size: 11px;
+                    font-weight: 600;
+                    text-transform: uppercase;
+                    letter-spacing: 0.06em;
+                    color: var(--vscode-descriptionForeground);
+                    border-bottom: 1px solid var(--vscode-panel-border);
+                    flex-shrink: 0;
+                }
+
+                .history-clear-btn {
+                    background: none;
+                    border: none;
+                    color: var(--vscode-descriptionForeground);
+                    font-size: 11px;
+                    cursor: pointer;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                    transition: background 0.15s;
+                }
+                .history-clear-btn:hover { background: rgba(248,81,73,0.12); color: var(--danger-color); }
+
+                .history-empty {
+                    padding: 20px;
+                    text-align: center;
+                    font-size: 12px;
+                    color: var(--vscode-descriptionForeground);
+                    opacity: 0.6;
+                }
+
+                .history-item {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 10px;
+                    padding: 10px 14px;
+                    border-bottom: 1px solid var(--vscode-panel-border);
+                    cursor: pointer;
+                    transition: background 0.15s;
+                }
+                .history-item:last-child { border-bottom: none; }
+                .history-item:hover { background: rgba(128,128,128,0.08); }
+
+                .history-item-icon {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 50%;
+                    background: rgba(0,132,255,0.12);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    flex-shrink: 0;
+                    margin-top: 1px;
+                }
+                .history-item-icon svg { width: 14px; height: 14px; fill: var(--primary-color); }
+
+                .history-item-body { flex: 1; min-width: 0; }
+
+                .history-item-preview {
+                    font-size: 12px;
+                    font-weight: 500;
+                    color: var(--vscode-foreground);
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+
+                .history-item-meta {
+                    font-size: 11px;
+                    color: var(--vscode-descriptionForeground);
+                    margin-top: 2px;
+                }
+
                 .input-container {
                     padding: 16px 20px;
                     background: var(--vscode-editor-background);
                     flex-shrink: 0;
+                    min-width: 0;
+                    overflow: hidden;
                 }
 
                 .chat-input-wrapper {
                     flex: 1;
+                    min-width: 0;
                     background: var(--input-bg);
                     border: 1px solid var(--vscode-input-border);
                     border-radius: 24px;
@@ -530,6 +794,7 @@ class ChatViewProvider {
                     align-items: center;
                     transition: all 0.2s;
                     box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+                    overflow: hidden;
                 }
                 .chat-input-wrapper:focus-within {
                     border-color: var(--primary-color);
@@ -538,12 +803,15 @@ class ChatViewProvider {
 
                 .chat-input {
                     flex: 1;
+                    min-width: 0;
                     background: transparent;
                     border: none;
                     color: var(--input-fg);
                     font-size: 14px;
                     padding: 0;
                     outline: none;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
                 }
 
                 .send-icon-btn {
@@ -651,87 +919,191 @@ class ChatViewProvider {
                 .status-step.pending .status-text {
                     opacity: 0.5;
                 }
+
+                /* ── Tab bar ── */
+                .tab-bar {
+                    display: flex;
+                    background: var(--vscode-sideBar-background);
+                    border-bottom: 1px solid var(--vscode-panel-border);
+                    flex-shrink: 0;
+                }
+
+                .tab-btn {
+                    flex: 1;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 7px;
+                    padding: 10px 8px;
+                    background: none;
+                    border: none;
+                    border-bottom: 2px solid transparent;
+                    color: var(--vscode-descriptionForeground);
+                    font-size: 12px;
+                    font-weight: 500;
+                    font-family: var(--vscode-font-family, inherit);
+                    cursor: pointer;
+                    transition: color 0.15s, border-color 0.15s;
+                    white-space: nowrap;
+                }
+
+                .tab-btn svg {
+                    width: 16px;
+                    height: 16px;
+                    fill: currentColor;
+                    flex-shrink: 0;
+                }
+
+                .tab-btn:hover {
+                    color: var(--vscode-foreground);
+                    background: rgba(128,128,128,0.08);
+                }
+
+                .tab-btn.active {
+                    color: var(--primary-color);
+                    border-bottom-color: var(--primary-color);
+                }
+
+                /* ── Tab panels ── */
+                .tab-panel {
+                    display: none;
+                    flex: 1;
+                    flex-direction: column;
+                    overflow: hidden;
+                    min-height: 0;
+                }
+
+                .tab-panel.active {
+                    display: flex;
+                }
+
+                .analyser-panel-scroll {
+                    overflow-y: auto;
+                    padding: 0;
+                    display: flex;
+                    flex-direction: column;
+                }
             </style>
         </head>
         <body>
-            <header>
-                <div class="header-title">
-                    <svg style="width:20px;height:20px;fill:currentColor;" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-9l-1 1H5v2h14V4z"/></svg>
-                    <span>Project Assistant</span>
-                </div>
-                <div class="header-right">
-                    <button id="new-chat-btn" class="icon-btn" title="New Chat">
-                        <svg viewBox="0 0 24 24"><path d="M14.06 9.02l.92.92L5.92 19H5v-.92l9.06-9.06M17.66 3c-.25 0-.51.1-.7.29l-1.83 1.83 3.75 3.75 1.83-1.83c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.2-.2-.45-.29-.71-.29m-3.6 3.19L3 17.25V21h3.75L17.81 9.94l-3.75-3.75z"/></svg>
-                    </button>
-                </div>
-            </header>
-
-            <div class="file-upload-section">
-                <div>
-                    <h2 class="setup-title">Setup your project with AI</h2>
-                    <p class="setup-description">The intelligent assistant analyses the project</p>
-                </div>
-                <div id="upload-area" class="upload-area">
-                    <svg class="upload-icon" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-                    <div class="upload-text">Drop your steps file here</div>
-                    <div class="upload-hint">or click to select .json or .txt</div>
-                </div>
-                <div id="file-loaded" style="display:none;">
-                    <div class="file-loaded">
-                        <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
-                        <span id="file-name">steps file loaded</span>
-                    </div>
-                    <button id="analyse-btn" class="analyse-btn">🔍 Analyse project</button>
-                </div>
-                <input type="file" id="steps-file-input" accept=".json,.txt" />
+            <!-- Tab bar -->
+            <div class="tab-bar">
+                <button class="tab-btn active" data-tab="analyser">
+                    <svg viewBox="0 0 24 24"><path d="M19.8 18.4L14 10.67V6.5l1.35-1.69c.26-.33.03-.81-.39-.81H9.04c-.42 0-.65.48-.39.81L10 6.5v4.17L4.2 18.4c-.49.66-.02 1.6.8 1.6h14c.82 0 1.29-.94.8-1.6z"/></svg>
+                    Project Analyser
+                </button>
+                <button class="tab-btn" data-tab="chat">
+                    <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/></svg>
+                    Chat
+                </button>
             </div>
 
-            <div id="status-bar" class="status-bar">
-                <div class="status-steps">
-                    <div class="status-step pending" data-step="analysing">
-                        <div class="status-icon">1</div>
-                        <div class="status-text">Analysing</div>
+            <!-- Chat tab -->
+            <div class="tab-panel" id="tab-chat">
+                <div id="history-drawer" class="history-drawer">
+                    <div class="history-header">
+                        <span>Chat History</span>
+                        <button class="history-clear-btn" id="history-clear-btn">Clear all</button>
                     </div>
-                    <div class="status-step pending" data-step="installing">
-                        <div class="status-icon">2</div>
-                        <div class="status-text">Install Dependencies</div>
+                    <div id="history-list"></div>
+                </div>
+                <div id="chat-container">
+                    <div class="message-wrapper assistant">
+                        <div class="message-bubble">How can I assist you today?</div>
                     </div>
-                    <div class="status-step pending" data-step="configuring">
-                        <div class="status-icon">3</div>
-                        <div class="status-text">Configure Environment</div>
+                </div>
+
+                <div class="input-container">
+                    <div class="chat-input-wrapper">
+                        <input type="text" id="prompt-input" class="chat-input" placeholder="Ask about project setup..." autocomplete="off" />
+                        <button id="send-btn" class="send-icon-btn" title="Send">
+                            <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                        </button>
                     </div>
-                    <div class="status-step pending" data-step="running">
-                        <div class="status-icon">4</div>
-                        <div class="status-text">Run Application</div>
+                    <div style="display:flex; justify-content:flex-end; gap:6px; margin-top:6px;">
+                        <button id="history-btn" class="icon-btn" title="Chat History" style="font-size:11px; gap:4px; padding:4px 8px; display:flex; align-items:center;">
+                            <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+                            History
+                        </button>
+                        <button id="new-chat-btn" class="icon-btn" title="New Chat" style="font-size:11px; gap:4px; padding:4px 8px; display:flex; align-items:center;">
+                            <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M14.06 9.02l.92.92L5.92 19H5v-.92l9.06-9.06M17.66 3c-.25 0-.51.1-.7.29l-1.83 1.83 3.75 3.75 1.83-1.83c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.2-.2-.45-.29-.71-.29m-3.6 3.19L3 17.25V21h3.75L17.81 9.94l-3.75-3.75z"/></svg>
+                            New Chat
+                        </button>
                     </div>
                 </div>
             </div>
 
-            <div id="chat-container">
-                <div id="welcome-msg" style="text-align: center; margin-top: 40px; opacity: 0.4; display:flex; flex-direction:column; align-items:center; gap:10px;">
-                    <svg viewBox="0 0 24 24" style="width:48px;height:48px;fill:currentColor;"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2m0 14H6l-2 2V4h16v12z"/></svg>
-                    <span style="font-size:13px; font-weight:500;">Project Assistant</span>
-                </div>
-            </div>
+            <!-- Project Analyser tab -->
+            <div class="tab-panel active" id="tab-analyser">
+                <div class="analyser-panel-scroll">
+                    <div class="file-upload-section">
+                        <div>
+                            <h2 class="setup-title">Start installing your project</h2>
+                            <p class="setup-description">The intelligent assistant analyses the project</p>
+                        </div>
+                        <button id="analyse-btn" class="analyse-btn">Analyse project</button>
+                        <p id="or-drop-label" class="or-drop-label">or manually drop your steps file</p>
+                        <div id="upload-area" class="upload-area">
+                            <svg class="upload-icon" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                            <div class="upload-text">Drop your steps file here</div>
+                            <div class="upload-hint">or click to select .json or .txt</div>
+                        </div>
+                        <div id="file-loaded" style="display:none;">
+                            <div class="file-loaded">
+                                <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+                                <span id="file-name">steps file loaded</span>
+                            </div>
+                            <button id="analyse-file-btn" class="analyse-file-btn">Analyse file</button>
+                        </div>
+                        <input type="file" id="steps-file-input" accept=".json,.txt" />
+                    </div>
 
-            <div class="input-container">
-                <div class="chat-input-wrapper">
-                    <input type="text" id="prompt-input" class="chat-input" placeholder="Ask about project setup..." autocomplete="off" />
-                    <button id="send-btn" class="send-icon-btn" title="Send">
-                        <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
-                    </button>
+                    <div id="status-bar" class="status-bar">
+                        <div class="status-steps">
+                            <div class="status-step pending" data-step="analysing">
+                                <div class="status-icon">1</div>
+                                <div class="status-text">Analysing</div>
+                            </div>
+                            <div class="status-step pending" data-step="installing">
+                                <div class="status-icon">2</div>
+                                <div class="status-text">Install Dependencies</div>
+                            </div>
+                            <div class="status-step pending" data-step="configuring">
+                                <div class="status-icon">3</div>
+                                <div class="status-text">Configure Environment</div>
+                            </div>
+                            <div class="status-step pending" data-step="running">
+                                <div class="status-icon">4</div>
+                                <div class="status-text">Run Application</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <script>
                 const vscode = acquireVsCodeApi();
                 const previousState = vscode.getState() || {};
-                
+
+                // ── Tab switching ──
+                document.querySelectorAll('.tab-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+                        btn.classList.add('active');
+                        document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+                    });
+                });
+
                 const chat = document.getElementById('chat-container');
                 const inp = document.getElementById('prompt-input');
                 const btnSend = document.getElementById('send-btn');
                 const btnNewChat = document.getElementById('new-chat-btn');
-                
+                const btnHistory = document.getElementById('history-btn');
+                const historyDrawer = document.getElementById('history-drawer');
+                const historyList = document.getElementById('history-list');
+                const historyClearBtn = document.getElementById('history-clear-btn');
+
                 const uploadArea = document.getElementById('upload-area');
                 const fileInput = document.getElementById('steps-file-input');
                 const fileLoaded = document.getElementById('file-loaded');
@@ -739,6 +1111,7 @@ class ChatViewProvider {
                 const statusBar = document.getElementById('status-bar');
 
                 let chatMessages = [];
+                let chatSessions = JSON.parse(vscode.getState()?.chatSessions || '[]');
                 let currentFile = null;
 
                 inp.focus();
@@ -817,6 +1190,17 @@ class ChatViewProvider {
                     };
                 }
 
+                const analyseFileBtn = document.getElementById('analyse-file-btn');
+                if (analyseFileBtn) {
+                    analyseFileBtn.onclick = () => {
+                        if (currentFile) {
+                            showStatusBar();
+                            addMsg('Analysing file: ' + currentFile.name, 'user');
+                            vscode.postMessage({ type: 'analyseProject', file: currentFile });
+                        }
+                    };
+                }
+
                 function handleFileSelect(file) {
                     if (!file) return;
                     if (!file.name.match(/\\.(json|txt)$/)) {
@@ -840,6 +1224,7 @@ class ChatViewProvider {
                             vscode.postMessage({ type: 'uploadStepsFile', file: currentFile, projectInfo: projectInfo });
                             
                             uploadArea.style.display = 'none';
+                            document.getElementById('or-drop-label').style.display = 'none';
                             fileLoaded.style.display = 'block';
                             fileName.textContent = file.name;
                         } catch (err) {
@@ -870,21 +1255,102 @@ class ChatViewProvider {
                     chat.scrollTop = chat.scrollHeight;
                 }
 
+                // ── History helpers ──
+                function saveSession() {
+                    if (chatMessages.length === 0) return;
+                    const session = {
+                        id: Date.now(),
+                        messages: [...chatMessages],
+                        preview: chatMessages[0]?.text || 'Chat session',
+                        ts: new Date().toLocaleString()
+                    };
+                    chatSessions.unshift(session);
+                    persistSessions();
+                }
+
+                function persistSessions() {
+                    const state = vscode.getState() || {};
+                    vscode.setState({ ...state, chatSessions: JSON.stringify(chatSessions) });
+                }
+
+                function renderHistoryList() {
+                    historyList.innerHTML = '';
+                    if (chatSessions.length === 0) {
+                        historyList.innerHTML = '<div class="history-empty">No previous chats yet</div>';
+                        return;
+                    }
+                    chatSessions.forEach((session) => {
+                        const item = document.createElement('div');
+                        item.className = 'history-item';
+                        item.innerHTML =
+                            '<div class="history-item-icon"><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/></svg></div>' +
+                            '<div class="history-item-body">' +
+                                '<div class="history-item-preview">' + escapeHtml(session.preview.slice(0, 60)) + '</div>' +
+                                '<div class="history-item-meta">' + session.ts + ' · ' + session.messages.length + ' messages</div>' +
+                            '</div>';
+                        item.onclick = () => restoreSession(session);
+                        historyList.appendChild(item);
+                    });
+                }
+
+                function restoreSession(session) {
+                    chat.innerHTML = '';
+                    chatMessages = [];
+                    session.messages.forEach(msg => {
+                        const wrapper = document.createElement('div');
+                        wrapper.className = 'message-wrapper ' + msg.type;
+                        const bubble = document.createElement('div');
+                        bubble.className = 'message-bubble';
+                        bubble.textContent = msg.text;
+                        wrapper.appendChild(bubble);
+                        if (msg.ts) {
+                            const time = document.createElement('div');
+                            time.className = 'message-time';
+                            time.textContent = msg.ts;
+                            wrapper.appendChild(time);
+                        }
+                        chat.appendChild(wrapper);
+                        chatMessages.push(msg);
+                    });
+                    chat.scrollTop = chat.scrollHeight;
+                    historyDrawer.classList.remove('open');
+                }
+
+                function escapeHtml(str) {
+                    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+                }
+
+                // History toggle
+                btnHistory.onclick = () => {
+                    renderHistoryList();
+                    historyDrawer.classList.toggle('open');
+                };
+
+                historyClearBtn.onclick = () => {
+                    chatSessions = [];
+                    persistSessions();
+                    renderHistoryList();
+                };
+
                 // New Chat
                 btnNewChat.onclick = () => {
-                   chat.innerHTML = '<div id="welcome-msg" style="text-align: center; margin-top: 40px; opacity: 0.4; display:flex; flex-direction:column; align-items:center; gap:10px;">' +
-                        '<svg viewBox="0 0 24 24" style="width:48px;height:48px;fill:currentColor;"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2m0 14H6l-2 2V4h16v12z"/></svg>' +
-                        '<span style="font-size:13px; font-weight:500;">Project Assistant</span>' +
+                    saveSession();
+                    historyDrawer.classList.remove('open');
+                    chat.innerHTML = '<div class="message-wrapper assistant">' +
+                        '<div class="message-bubble">How can I assist you today?</div>' +
                     '</div>';
-                   chatMessages = [];
-                   hideStatusBar();
-                   vscode.setState({ ...vscode.getState(), chatMessages: [] });
-                   vscode.postMessage({ type: 'clearHistory' });
+                    chatMessages = [];
+                    hideStatusBar();
+                    vscode.setState({ ...vscode.getState(), chatMessages: [] });
+                    vscode.postMessage({ type: 'clearHistory' });
                 };
 
                 function addMsg(text, type) {
                     const welcome = document.getElementById('welcome-msg');
                     if (welcome) welcome.remove();
+
+                    const now = new Date();
+                    const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
                     const wrapper = document.createElement('div');
                     wrapper.className = 'message-wrapper ' + type;
@@ -892,12 +1358,17 @@ class ChatViewProvider {
                     const bubble = document.createElement('div');
                     bubble.className = 'message-bubble';
                     bubble.textContent = text;
+
+                    const time = document.createElement('div');
+                    time.className = 'message-time';
+                    time.textContent = ts;
                     
                     wrapper.appendChild(bubble);
+                    wrapper.appendChild(time);
                     chat.appendChild(wrapper);
                     chat.scrollTop = chat.scrollHeight;
                     
-                    chatMessages.push({ text, type });
+                    chatMessages.push({ text, type, ts });
                     vscode.setState({ 
                         ...vscode.getState(), 
                         chatMessages: chatMessages 
@@ -1366,6 +1837,403 @@ function stopServer() {
 /***/ ((module) => {
 
 module.exports = require("http");
+
+/***/ }),
+/* 8 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AuthManager = void 0;
+const vscode = __importStar(__webpack_require__(1));
+const axios_1 = __importDefault(__webpack_require__(9));
+const TOKEN_KEY = "auth.token";
+const HEALTH_POLL_INTERVAL_MS = 30_000;
+/**
+ * AuthManager handles all authentication concerns for the VS Code extension.
+ *
+ * Security requirements (§3.3):
+ *  - JWT stored in context.secrets (OS keychain) — NEVER in settings.json
+ *  - Anthropic API key: never in the extension; all Claude calls go through the backend
+ *  - Auto-reconnect: poll /health every 30s when backend is offline
+ */
+class AuthManager {
+    context;
+    statusBar;
+    onOnline;
+    onOffline;
+    token;
+    apiClient;
+    healthPollTimer;
+    isOnline = false;
+    isSessionVerified = false;
+    constructor(context, statusBar, onOnline, onOffline) {
+        this.context = context;
+        this.statusBar = statusBar;
+        this.onOnline = onOnline;
+        this.onOffline = onOffline;
+        const apiUrl = vscode.workspace.getConfiguration("projectAssistant").get("apiUrl") ??
+            "http://localhost:8000";
+        this.apiClient = axios_1.default.create({
+            baseURL: apiUrl,
+            withCredentials: true,
+            timeout: 5_000,
+        });
+        // Inject Bearer token on every request
+        this.apiClient.interceptors.request.use((config) => {
+            if (this.token) {
+                config.headers["Authorization"] = `Bearer ${this.token}`;
+            }
+            return config;
+        });
+        // 401 → clear token, show "session expired"
+        this.apiClient.interceptors.response.use((res) => res, async (error) => {
+            if (error.response?.status === 401) {
+                await this.clearToken();
+                await this.setAuthContext(false);
+                this.showSessionExpired();
+            }
+            return Promise.reject(error);
+        });
+    }
+    // ---------------------------------------------------------------------------
+    // Lifecycle
+    // ---------------------------------------------------------------------------
+    async activate() {
+        // Restore token from secure storage
+        this.token = await this.context.secrets.get(TOKEN_KEY);
+        await this.setAuthContext(false);
+        // Check backend availability with 2-second timeout
+        const online = await this.checkHealth();
+        if (online) {
+            if (this.token) {
+                const valid = await this.validateStoredToken();
+                if (!valid) {
+                    await this.clearToken();
+                }
+            }
+            this.isOnline = true;
+            this.onOnline();
+        }
+        else {
+            this.isOnline = false;
+            this.showOffline();
+            this.startHealthPolling();
+        }
+    }
+    deactivate() {
+        this.stopHealthPolling();
+    }
+    // ---------------------------------------------------------------------------
+    // Authentication
+    // ---------------------------------------------------------------------------
+    async login(email, password) {
+        const response = await this.apiClient.post("/auth/login", { email, password });
+        const { access_token } = response.data;
+        await this.storeToken(access_token);
+        this.isSessionVerified = true;
+        await this.setAuthContext(true);
+        vscode.window.showInformationMessage(`Signed in as ${response.data.user.email}`);
+    }
+    async logout() {
+        let logoutError;
+        try {
+            await this.apiClient.post("/auth/logout");
+        }
+        catch (error) {
+            logoutError = error;
+        }
+        finally {
+            await this.clearToken();
+            await this.setAuthContext(false);
+            this.statusBar.text = "$(account) Sign in to Intelligent Assistant";
+            this.statusBar.command = "project-assistant.login";
+            this.statusBar.show();
+        }
+        if (axios_1.default.isAxiosError(logoutError)) {
+            const status = logoutError.response?.status;
+            if (!status || status === 401 || status === 403 || status === 404) {
+                return;
+            }
+        }
+        if (logoutError) {
+            throw logoutError;
+        }
+    }
+    isAuthenticated() {
+        return !!this.token;
+    }
+    async hasStoredToken() {
+        const storedToken = await this.context.secrets.get(TOKEN_KEY);
+        return !!storedToken;
+    }
+    getApiClient() {
+        return this.apiClient;
+    }
+    // ---------------------------------------------------------------------------
+    // Token storage (OS keychain via SecretStorage)
+    // ---------------------------------------------------------------------------
+    async storeToken(token) {
+        this.token = token;
+        await this.context.secrets.store(TOKEN_KEY, token);
+    }
+    async clearToken() {
+        this.token = undefined;
+        this.isSessionVerified = false;
+        await this.context.secrets.delete(TOKEN_KEY);
+    }
+    async validateStoredToken() {
+        try {
+            await this.apiClient.get("/api/users/me");
+            this.isSessionVerified = true;
+            await this.setAuthContext(true);
+            return true;
+        }
+        catch {
+            this.isSessionVerified = false;
+            await this.setAuthContext(false);
+            return false;
+        }
+    }
+    async setAuthContext(authenticated) {
+        await vscode.commands.executeCommand("setContext", "projectAssistant.authenticated", authenticated);
+    }
+    // ---------------------------------------------------------------------------
+    // Health check & offline handling
+    // ---------------------------------------------------------------------------
+    async checkHealth() {
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 2_000);
+            await this.apiClient.get("/health", {
+                signal: controller.signal,
+                validateStatus: () => true,
+            });
+            clearTimeout(timeout);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    startHealthPolling() {
+        this.stopHealthPolling();
+        this.healthPollTimer = setInterval(async () => {
+            const online = await this.checkHealth();
+            if (online && !this.isOnline) {
+                this.isOnline = true;
+                this.stopHealthPolling();
+                this.onOnline();
+            }
+        }, HEALTH_POLL_INTERVAL_MS);
+    }
+    stopHealthPolling() {
+        if (this.healthPollTimer) {
+            clearInterval(this.healthPollTimer);
+            this.healthPollTimer = undefined;
+        }
+    }
+    // ---------------------------------------------------------------------------
+    // Status bar messages
+    // ---------------------------------------------------------------------------
+    showOffline() {
+        this.onOffline();
+        this.statusBar.text = "$(warning) Backend offline — Start server to continue";
+        this.statusBar.tooltip = "Click to retry connection";
+        this.statusBar.command = "project-assistant.retryConnection";
+        this.statusBar.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+        this.statusBar.show();
+    }
+    showSessionExpired() {
+        this.statusBar.text = "$(lock) Session expired — Click to sign in";
+        this.statusBar.command = "project-assistant.login";
+        this.statusBar.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+        this.statusBar.show();
+        vscode.window
+            .showWarningMessage("Your session has expired. Please sign in again.", "Sign In")
+            .then((action) => {
+            if (action === "Sign In") {
+                vscode.commands.executeCommand("project-assistant.login");
+            }
+        });
+    }
+}
+exports.AuthManager = AuthManager;
+
+
+/***/ }),
+/* 9 */
+/***/ ((module) => {
+
+module.exports = require("axios");
+
+/***/ }),
+/* 10 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ProjectsTreeProvider = exports.ProjectItem = void 0;
+const vscode = __importStar(__webpack_require__(1));
+const STATUS_ICONS = {
+    running: "$(play-circle)",
+    installing: "$(sync~spin)",
+    stopped: "$(stop-circle)",
+    failed: "$(error)",
+    analyzing: "$(search)",
+    queued: "$(clock)",
+};
+class ProjectItem extends vscode.TreeItem {
+    project;
+    constructor(project) {
+        super(project.name, vscode.TreeItemCollapsibleState.None);
+        this.project = project;
+        const icon = STATUS_ICONS[project.status] ?? "$(circle-outline)";
+        this.label = `${icon} ${project.name}`;
+        this.description = project.status;
+        this.tooltip = [
+            `Status: ${project.status}`,
+            project.type ? `Type: ${project.type}` : null,
+            project.port ? `Port: ${project.port}` : null,
+        ]
+            .filter(Boolean)
+            .join("\n");
+        this.contextValue = `project-${project.status}`;
+    }
+}
+exports.ProjectItem = ProjectItem;
+class ProjectsTreeProvider {
+    context;
+    _onDidChangeTreeData = new vscode.EventEmitter();
+    onDidChangeTreeData = this._onDidChangeTreeData.event;
+    projects = [];
+    CACHE_KEY = "projects.cache";
+    constructor(context) {
+        this.context = context;
+    }
+    getTreeItem(element) {
+        return element;
+    }
+    getChildren() {
+        return this.projects.map((p) => new ProjectItem(p));
+    }
+    // ---------------------------------------------------------------------------
+    // Load from API (online)
+    // ---------------------------------------------------------------------------
+    async loadFromApi(apiClient) {
+        try {
+            const { data } = await apiClient.get("/api/users/me/projects", { params: { per_page: 50 } });
+            this.projects = data.items;
+            // Persist non-sensitive fields for offline use
+            await this.context.globalState.update(this.CACHE_KEY, this.projects);
+            this._onDidChangeTreeData.fire(undefined);
+        }
+        catch (err) {
+            if (err?.response?.status === 401) {
+                this.projects = [];
+                this._onDidChangeTreeData.fire(undefined);
+                return;
+            }
+            console.error("[ProjectsTreeProvider] Failed to load projects:", err);
+        }
+    }
+    // ---------------------------------------------------------------------------
+    // Load from cache (offline)
+    // ---------------------------------------------------------------------------
+    loadFromCache() {
+        const cached = this.context.globalState.get(this.CACHE_KEY, []);
+        this.projects = cached;
+        this._onDidChangeTreeData.fire(undefined);
+    }
+    async clearProjects(clearCache = true) {
+        this.projects = [];
+        if (clearCache) {
+            await this.context.globalState.update(this.CACHE_KEY, []);
+        }
+        this._onDidChangeTreeData.fire(undefined);
+    }
+    // ---------------------------------------------------------------------------
+    // Real-time update from WebSocket (update single item in-place)
+    // ---------------------------------------------------------------------------
+    updateProjectStatus(projectId, newStatus) {
+        const project = this.projects.find((p) => p.id === projectId);
+        if (project) {
+            project.status = newStatus;
+            this._onDidChangeTreeData.fire(undefined);
+        }
+    }
+}
+exports.ProjectsTreeProvider = ProjectsTreeProvider;
+
 
 /***/ })
 /******/ 	]);
