@@ -182,6 +182,24 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
       return { running: isServerRunning() };
     }),
 
+    vscode.commands.registerCommand('project-assistant.inspectAuthState', async () => {
+      try {
+        const hasStoredToken = await authManager.hasStoredToken();
+        const hasInMemoryToken = authManager.isAuthenticated();
+        const summary = `Auth state — keychain: ${hasStoredToken ? 'present' : 'missing'}, memory: ${hasInMemoryToken ? 'present' : 'missing'}`;
+        vscode.window.showInformationMessage(summary);
+        return {
+          success: true,
+          hasStoredToken,
+          hasInMemoryToken,
+        };
+      } catch (err: any) {
+        const message = err?.message || 'Failed to inspect auth state';
+        vscode.window.showErrorMessage(message);
+        return { success: false, error: message };
+      }
+    }),
+
     vscode.commands.registerCommand('project-assistant.login', async () => {
       try {
         const email = await vscode.window.showInputBox({

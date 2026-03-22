@@ -108,8 +108,11 @@ export class AuthManager {
   }
 
   async logout(): Promise<void> {
+    let logoutError: unknown;
     try {
       await this.apiClient.post("/auth/logout");
+    } catch (error) {
+      logoutError = error;
     } finally {
       await this.clearToken();
       await this.setAuthContext(false);
@@ -117,10 +120,26 @@ export class AuthManager {
       this.statusBar.command = "project-assistant.login";
       this.statusBar.show();
     }
+
+    if (axios.isAxiosError(logoutError)) {
+      const status = logoutError.response?.status;
+      if (!status || status === 401 || status === 403 || status === 404) {
+        return;
+      }
+    }
+
+    if (logoutError) {
+      throw logoutError;
+    }
   }
 
   isAuthenticated(): boolean {
     return !!this.token;
+  }
+
+  async hasStoredToken(): Promise<boolean> {
+    const storedToken = await this.context.secrets.get(TOKEN_KEY);
+    return !!storedToken;
   }
 
   getApiClient(): AxiosInstance {

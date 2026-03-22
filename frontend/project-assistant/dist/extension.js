@@ -185,6 +185,23 @@ async function activate(context) {
         return await (0, llmService_1.getAvailableModels)();
     }), vscode.commands.registerCommand('project-assistant.getServerStatus', () => {
         return { running: (0, server_1.isServerRunning)() };
+    }), vscode.commands.registerCommand('project-assistant.inspectAuthState', async () => {
+        try {
+            const hasStoredToken = await authManager.hasStoredToken();
+            const hasInMemoryToken = authManager.isAuthenticated();
+            const summary = `Auth state — keychain: ${hasStoredToken ? 'present' : 'missing'}, memory: ${hasInMemoryToken ? 'present' : 'missing'}`;
+            vscode.window.showInformationMessage(summary);
+            return {
+                success: true,
+                hasStoredToken,
+                hasInMemoryToken,
+            };
+        }
+        catch (err) {
+            const message = err?.message || 'Failed to inspect auth state';
+            vscode.window.showErrorMessage(message);
+            return { success: false, error: message };
+        }
     }), vscode.commands.registerCommand('project-assistant.login', async () => {
         try {
             const email = await vscode.window.showInputBox({
@@ -1955,8 +1972,12 @@ class AuthManager {
         vscode.window.showInformationMessage(`Signed in as ${response.data.user.email}`);
     }
     async logout() {
+        let logoutError;
         try {
             await this.apiClient.post("/auth/logout");
+        }
+        catch (error) {
+            logoutError = error;
         }
         finally {
             await this.clearToken();
@@ -1965,9 +1986,22 @@ class AuthManager {
             this.statusBar.command = "project-assistant.login";
             this.statusBar.show();
         }
+        if (axios_1.default.isAxiosError(logoutError)) {
+            const status = logoutError.response?.status;
+            if (!status || status === 401 || status === 403 || status === 404) {
+                return;
+            }
+        }
+        if (logoutError) {
+            throw logoutError;
+        }
     }
     isAuthenticated() {
         return !!this.token;
+    }
+    async hasStoredToken() {
+        const storedToken = await this.context.secrets.get(TOKEN_KEY);
+        return !!storedToken;
     }
     getApiClient() {
         return this.apiClient;

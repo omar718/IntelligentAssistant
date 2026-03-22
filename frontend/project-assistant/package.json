@@ -70,6 +70,10 @@
       {
         "command": "project-assistant.retryConnection",
         "title": "Project Assistant: Retry Connection"
+      },
+      {
+        "command": "project-assistant.inspectAuthState",
+        "title": "Project Assistant: Inspect Auth State"
       }
     ],
     "menus": {
