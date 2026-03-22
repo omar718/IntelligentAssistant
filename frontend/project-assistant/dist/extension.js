@@ -46,60 +46,114 @@ const os = __importStar(__webpack_require__(2));
 const chatViewProvider_1 = __webpack_require__(3);
 const server_1 = __webpack_require__(6);
 const llmService_1 = __webpack_require__(5);
-function activate(context) {
-    vscode.window.showInformationMessage('Project Assistant activated');
+const authManager_1 = __webpack_require__(8);
+const ProjectsTreeProvider_1 = __webpack_require__(10);
+let authManager;
+let treeProvider;
+async function activate(context) {
+    // ─── Output Channel ───────────────────────────────────────────────────────
     const outputChannel = vscode.window.createOutputChannel('Project Assistant API');
     context.subscriptions.push(outputChannel);
+    // ─── Status Bar ───────────────────────────────────────────────────────────
+    const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    context.subscriptions.push(statusBar);
+    // ─── Projects Tree View ───────────────────────────────────────────────────
+    treeProvider = new ProjectsTreeProvider_1.ProjectsTreeProvider(context);
+    vscode.window.registerTreeDataProvider('projectAssistant.projects', treeProvider);
+    // ─── API Info Helper ──────────────────────────────────────────────────────
     const showApiInfo = (port) => {
         outputChannel.clear();
         outputChannel.appendLine(`URL: http://localhost:${port}/Mobelite/chat`);
         outputChannel.appendLine(' Method: POST');
         outputChannel.appendLine('--------------------------------------------------');
         outputChannel.appendLine('Request Body (JSON):');
-        outputChannel.appendLine(JSON.stringify({
-            prompt: 'Your prompt here...',
-        }, null, 2));
+        outputChannel.appendLine(JSON.stringify({ prompt: 'Your prompt here...' }, null, 2));
         outputChannel.appendLine('--------------------------------------------------');
         outputChannel.appendLine('Expected Response (JSON):');
-        outputChannel.appendLine(JSON.stringify({
-            result: 'The refined or generated response text.',
-        }, null, 2));
+        outputChannel.appendLine(JSON.stringify({ result: 'The refined or generated response text.' }, null, 2));
         outputChannel.appendLine('--------------------------------------------------');
         outputChannel.show();
     };
-    context.subscriptions.push(vscode.commands.registerCommand('project-assistant.showApiInfo', (port) => {
-        showApiInfo(port || 6009);
-    }));
-    (0, llmService_1.getAvailableModels)().catch(console.error);
-    // Register the open-folder handler — opens a path in a new VS Code window
-    (0, server_1.registerOpenFolderCallback)((folderPath) => {
-        const uri = vscode.Uri.file(folderPath);
-        vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
-    });
-    // Register the pick-folder handler — opens native folder picker dialog
-    (0, server_1.registerPickFolderCallback)(async () => {
-        const uris = await vscode.window.showOpenDialog({
-            canSelectFiles: false,
-            canSelectFolders: true,
-            canSelectMany: false,
-            openLabel: 'Select clone destination',
-            title: 'Where should the repository be cloned?',
-            defaultUri: vscode.Uri.file(os.homedir()),
-        });
-        if (uris && uris.length > 0) {
-            return uris[0].fsPath;
+    // ─── Online / Offline Callbacks ───────────────────────────────────────────
+    const onOnline = async () => {
+        statusBar.text = '$(check) Assistant ready';
+        statusBar.backgroundColor = undefined;
+        statusBar.command = 'project-assistant.openChat';
+        statusBar.show();
+        if (authManager.isAuthenticated()) {
+            await treeProvider.loadFromApi(authManager.getApiClient());
         }
-        return null;
+        else {
+            await treeProvider.clearProjects(false);
+            vscode.commands.executeCommand('project-assistant.login');
+        }
+    };
+    const onOffline = () => {
+        void treeProvider.clearProjects(false);
+    };
+    // ─── Auth Manager ─────────────────────────────────────────────────────────
+    authManager = new authManager_1.AuthManager(context, statusBar, onOnline, onOffline);
+    // ─── Auto-Launch Logic ────────────────────────────────────────────────────
+    if (!authManager.isAuthenticated()) {
+        showOptionalLoginPrompt();
+    }
+    // ─── Folder Callbacks ─────────────────────────────────────────────────────
+    (0, server_1.registerOpenFolderCallback)((folderPath) => {
+        try {
+            const uri = vscode.Uri.file(folderPath);
+            void vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
+        }
+        catch (err) {
+            console.error('Error in openFolderCallback:', err);
+            vscode.window.showErrorMessage(`Error opening folder: ${err?.message || 'Unknown error'}`);
+        }
     });
-    // Auto-start the server on activation
-    (0, server_1.startServer)(6009).then((port) => {
+    (0, server_1.registerPickFolderCallback)(async () => {
+        try {
+            // Add a timeout to prevent hanging
+            const timeoutPromise = new Promise((resolve) => {
+                setTimeout(() => {
+                    console.warn('Folder picker timeout - returning null');
+                    resolve(null);
+                }, 60000); // 60 second timeout
+            });
+            const pickerPromise = (async () => {
+                const uris = await vscode.window.showOpenDialog({
+                    canSelectFiles: false,
+                    canSelectFolders: true,
+                    canSelectMany: false,
+                    openLabel: 'Select clone destination',
+                    title: 'Where should the repository be cloned?',
+                    defaultUri: vscode.Uri.file(os.homedir()),
+                });
+                console.log('Folder picker result:', uris);
+                return uris && uris.length > 0 ? uris[0].fsPath : null;
+            })();
+            const result = await Promise.race([pickerPromise, timeoutPromise]);
+            return result;
+        }
+        catch (err) {
+            console.error('Folder picker error:', err);
+            vscode.window.showErrorMessage(`Folder picker error: ${err.message}`);
+            return null;
+        }
+    });
+    // ─── Auto-start Server ────────────────────────────────────────────────────
+    (0, server_1.startServer)(6009)
+        .then((port) => {
         outputChannel.appendLine(`Project Assistant server auto-started on port ${port}`);
-    }).catch((err) => {
+    })
+        .catch((err) => {
         if (!err.message.includes('already running')) {
             vscode.window.showWarningMessage(`Project Assistant: server could not start — ${err.message}`);
         }
     });
-    context.subscriptions.push(vscode.commands.registerCommand('project-assistant.startServer', async (port, modelId) => {
+    // ─── Pre-fetch Models ─────────────────────────────────────────────────────
+    (0, llmService_1.getAvailableModels)().catch(console.error);
+    // ─── Commands ─────────────────────────────────────────────────────────────
+    context.subscriptions.push(vscode.commands.registerCommand('project-assistant.showApiInfo', (port) => {
+        showApiInfo(port || 6009);
+    }), vscode.commands.registerCommand('project-assistant.startServer', async (port, modelId) => {
         try {
             const actualPort = await (0, server_1.startServer)(port, modelId);
             vscode.window
@@ -116,8 +170,7 @@ function activate(context) {
             vscode.window.showErrorMessage(`Failed to start server: ${error.message}`);
             return { success: false, error: error.message };
         }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('project-assistant.stopServer', async () => {
+    }), vscode.commands.registerCommand('project-assistant.stopServer', async () => {
         try {
             await (0, server_1.stopServer)();
             vscode.window.showInformationMessage('Project Assistant Server stopped');
@@ -128,25 +181,103 @@ function activate(context) {
             vscode.window.showErrorMessage(`Failed to stop server: ${error.message}`);
             return { success: false, error: error.message };
         }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('project-assistant.getModels', async () => {
-        const models = await (0, llmService_1.getAvailableModels)();
-        return models;
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('project-assistant.getServerStatus', () => {
+    }), vscode.commands.registerCommand('project-assistant.getModels', async () => {
+        return await (0, llmService_1.getAvailableModels)();
+    }), vscode.commands.registerCommand('project-assistant.getServerStatus', () => {
         return { running: (0, server_1.isServerRunning)() };
-    }));
-    const provider = new chatViewProvider_1.ChatViewProvider(context.extensionUri);
-    context.subscriptions.push(vscode.window.registerWebviewViewProvider(chatViewProvider_1.ChatViewProvider.viewType, provider, {
-        webviewOptions: {
-            retainContextWhenHidden: true,
-        },
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('project-assistant.openAssistant', () => {
+    }), vscode.commands.registerCommand('project-assistant.inspectAuthState', async () => {
+        try {
+            const hasStoredToken = await authManager.hasStoredToken();
+            const hasInMemoryToken = authManager.isAuthenticated();
+            const summary = `Auth state — keychain: ${hasStoredToken ? 'present' : 'missing'}, memory: ${hasInMemoryToken ? 'present' : 'missing'}`;
+            vscode.window.showInformationMessage(summary);
+            return {
+                success: true,
+                hasStoredToken,
+                hasInMemoryToken,
+            };
+        }
+        catch (err) {
+            const message = err?.message || 'Failed to inspect auth state';
+            vscode.window.showErrorMessage(message);
+            return { success: false, error: message };
+        }
+    }), vscode.commands.registerCommand('project-assistant.login', async () => {
+        try {
+            const email = await vscode.window.showInputBox({
+                prompt: 'Enter your email',
+                placeHolder: 'you@example.com',
+                ignoreFocusOut: true,
+            });
+            if (!email) {
+                return { success: false, cancelled: true };
+            }
+            const password = await vscode.window.showInputBox({
+                prompt: 'Enter your password',
+                password: true,
+                ignoreFocusOut: true,
+            });
+            if (!password) {
+                return { success: false, cancelled: true };
+            }
+            await authManager.login(email, password);
+            await onOnline();
+            vscode.window.showInformationMessage('Successfully signed in!');
+            return { success: true };
+        }
+        catch (err) {
+            const msg = err?.response?.status === 401
+                ? 'Invalid email or password'
+                : 'Login failed. Check the backend is running.';
+            vscode.window.showErrorMessage(msg);
+            return { success: false, error: msg };
+        }
+    }), vscode.commands.registerCommand('project-assistant.logout', async () => {
+        try {
+            await authManager.logout();
+            await treeProvider.clearProjects(true);
+            return { success: true };
+        }
+        catch (err) {
+            vscode.window.showErrorMessage('Logout failed');
+            return { success: false, error: err?.message };
+        }
+    }), vscode.commands.registerCommand('project-assistant.retryConnection', async () => {
+        try {
+            const online = await authManager.checkHealth();
+            if (online) {
+                onOnline();
+                return { success: true, online: true };
+            }
+            else {
+                vscode.window.showWarningMessage('Backend still offline. Is the server running?');
+                return { success: false, online: false };
+            }
+        }
+        catch (err) {
+            vscode.window.showErrorMessage('Connection check failed');
+            return { success: false, error: err?.message };
+        }
+    }), vscode.commands.registerCommand('project-assistant.openAssistant', () => {
         vscode.commands.executeCommand('workbench.view.extension.project-assistant-sidebar');
     }));
+    // ─── Chat Webview ─────────────────────────────────────────────────────────
+    const provider = new chatViewProvider_1.ChatViewProvider(context.extensionUri);
+    context.subscriptions.push(vscode.window.registerWebviewViewProvider(chatViewProvider_1.ChatViewProvider.viewType, provider, {
+        webviewOptions: { retainContextWhenHidden: true },
+    }));
+    // ─── Activate Auth ────────────────────────────────────────────────────────
+    await authManager.activate();
+    vscode.window.showInformationMessage('Project Assistant activated');
+} // ← closing brace for activate()
+async function showOptionalLoginPrompt() {
+    const selection = await vscode.window.showInformationMessage("Welcome! Would you like to log in to sync your projects with DevLauncher?", "Log In", "Maybe Later");
+    if (selection === "Log In") {
+        vscode.commands.executeCommand('project-assistant.login');
+    }
 }
 function deactivate() {
+    authManager?.deactivate();
     return (0, server_1.stopServer)();
 }
 
@@ -1706,6 +1837,403 @@ function stopServer() {
 /***/ ((module) => {
 
 module.exports = require("http");
+
+/***/ }),
+/* 8 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AuthManager = void 0;
+const vscode = __importStar(__webpack_require__(1));
+const axios_1 = __importDefault(__webpack_require__(9));
+const TOKEN_KEY = "auth.token";
+const HEALTH_POLL_INTERVAL_MS = 30_000;
+/**
+ * AuthManager handles all authentication concerns for the VS Code extension.
+ *
+ * Security requirements (§3.3):
+ *  - JWT stored in context.secrets (OS keychain) — NEVER in settings.json
+ *  - Anthropic API key: never in the extension; all Claude calls go through the backend
+ *  - Auto-reconnect: poll /health every 30s when backend is offline
+ */
+class AuthManager {
+    context;
+    statusBar;
+    onOnline;
+    onOffline;
+    token;
+    apiClient;
+    healthPollTimer;
+    isOnline = false;
+    isSessionVerified = false;
+    constructor(context, statusBar, onOnline, onOffline) {
+        this.context = context;
+        this.statusBar = statusBar;
+        this.onOnline = onOnline;
+        this.onOffline = onOffline;
+        const apiUrl = vscode.workspace.getConfiguration("projectAssistant").get("apiUrl") ??
+            "http://localhost:8000";
+        this.apiClient = axios_1.default.create({
+            baseURL: apiUrl,
+            withCredentials: true,
+            timeout: 5_000,
+        });
+        // Inject Bearer token on every request
+        this.apiClient.interceptors.request.use((config) => {
+            if (this.token) {
+                config.headers["Authorization"] = `Bearer ${this.token}`;
+            }
+            return config;
+        });
+        // 401 → clear token, show "session expired"
+        this.apiClient.interceptors.response.use((res) => res, async (error) => {
+            if (error.response?.status === 401) {
+                await this.clearToken();
+                await this.setAuthContext(false);
+                this.showSessionExpired();
+            }
+            return Promise.reject(error);
+        });
+    }
+    // ---------------------------------------------------------------------------
+    // Lifecycle
+    // ---------------------------------------------------------------------------
+    async activate() {
+        // Restore token from secure storage
+        this.token = await this.context.secrets.get(TOKEN_KEY);
+        await this.setAuthContext(false);
+        // Check backend availability with 2-second timeout
+        const online = await this.checkHealth();
+        if (online) {
+            if (this.token) {
+                const valid = await this.validateStoredToken();
+                if (!valid) {
+                    await this.clearToken();
+                }
+            }
+            this.isOnline = true;
+            this.onOnline();
+        }
+        else {
+            this.isOnline = false;
+            this.showOffline();
+            this.startHealthPolling();
+        }
+    }
+    deactivate() {
+        this.stopHealthPolling();
+    }
+    // ---------------------------------------------------------------------------
+    // Authentication
+    // ---------------------------------------------------------------------------
+    async login(email, password) {
+        const response = await this.apiClient.post("/auth/login", { email, password });
+        const { access_token } = response.data;
+        await this.storeToken(access_token);
+        this.isSessionVerified = true;
+        await this.setAuthContext(true);
+        vscode.window.showInformationMessage(`Signed in as ${response.data.user.email}`);
+    }
+    async logout() {
+        let logoutError;
+        try {
+            await this.apiClient.post("/auth/logout");
+        }
+        catch (error) {
+            logoutError = error;
+        }
+        finally {
+            await this.clearToken();
+            await this.setAuthContext(false);
+            this.statusBar.text = "$(account) Sign in to Intelligent Assistant";
+            this.statusBar.command = "project-assistant.login";
+            this.statusBar.show();
+        }
+        if (axios_1.default.isAxiosError(logoutError)) {
+            const status = logoutError.response?.status;
+            if (!status || status === 401 || status === 403 || status === 404) {
+                return;
+            }
+        }
+        if (logoutError) {
+            throw logoutError;
+        }
+    }
+    isAuthenticated() {
+        return !!this.token;
+    }
+    async hasStoredToken() {
+        const storedToken = await this.context.secrets.get(TOKEN_KEY);
+        return !!storedToken;
+    }
+    getApiClient() {
+        return this.apiClient;
+    }
+    // ---------------------------------------------------------------------------
+    // Token storage (OS keychain via SecretStorage)
+    // ---------------------------------------------------------------------------
+    async storeToken(token) {
+        this.token = token;
+        await this.context.secrets.store(TOKEN_KEY, token);
+    }
+    async clearToken() {
+        this.token = undefined;
+        this.isSessionVerified = false;
+        await this.context.secrets.delete(TOKEN_KEY);
+    }
+    async validateStoredToken() {
+        try {
+            await this.apiClient.get("/api/users/me");
+            this.isSessionVerified = true;
+            await this.setAuthContext(true);
+            return true;
+        }
+        catch {
+            this.isSessionVerified = false;
+            await this.setAuthContext(false);
+            return false;
+        }
+    }
+    async setAuthContext(authenticated) {
+        await vscode.commands.executeCommand("setContext", "projectAssistant.authenticated", authenticated);
+    }
+    // ---------------------------------------------------------------------------
+    // Health check & offline handling
+    // ---------------------------------------------------------------------------
+    async checkHealth() {
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 2_000);
+            await this.apiClient.get("/health", {
+                signal: controller.signal,
+                validateStatus: () => true,
+            });
+            clearTimeout(timeout);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    startHealthPolling() {
+        this.stopHealthPolling();
+        this.healthPollTimer = setInterval(async () => {
+            const online = await this.checkHealth();
+            if (online && !this.isOnline) {
+                this.isOnline = true;
+                this.stopHealthPolling();
+                this.onOnline();
+            }
+        }, HEALTH_POLL_INTERVAL_MS);
+    }
+    stopHealthPolling() {
+        if (this.healthPollTimer) {
+            clearInterval(this.healthPollTimer);
+            this.healthPollTimer = undefined;
+        }
+    }
+    // ---------------------------------------------------------------------------
+    // Status bar messages
+    // ---------------------------------------------------------------------------
+    showOffline() {
+        this.onOffline();
+        this.statusBar.text = "$(warning) Backend offline — Start server to continue";
+        this.statusBar.tooltip = "Click to retry connection";
+        this.statusBar.command = "project-assistant.retryConnection";
+        this.statusBar.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+        this.statusBar.show();
+    }
+    showSessionExpired() {
+        this.statusBar.text = "$(lock) Session expired — Click to sign in";
+        this.statusBar.command = "project-assistant.login";
+        this.statusBar.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+        this.statusBar.show();
+        vscode.window
+            .showWarningMessage("Your session has expired. Please sign in again.", "Sign In")
+            .then((action) => {
+            if (action === "Sign In") {
+                vscode.commands.executeCommand("project-assistant.login");
+            }
+        });
+    }
+}
+exports.AuthManager = AuthManager;
+
+
+/***/ }),
+/* 9 */
+/***/ ((module) => {
+
+module.exports = require("axios");
+
+/***/ }),
+/* 10 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ProjectsTreeProvider = exports.ProjectItem = void 0;
+const vscode = __importStar(__webpack_require__(1));
+const STATUS_ICONS = {
+    running: "$(play-circle)",
+    installing: "$(sync~spin)",
+    stopped: "$(stop-circle)",
+    failed: "$(error)",
+    analyzing: "$(search)",
+    queued: "$(clock)",
+};
+class ProjectItem extends vscode.TreeItem {
+    project;
+    constructor(project) {
+        super(project.name, vscode.TreeItemCollapsibleState.None);
+        this.project = project;
+        const icon = STATUS_ICONS[project.status] ?? "$(circle-outline)";
+        this.label = `${icon} ${project.name}`;
+        this.description = project.status;
+        this.tooltip = [
+            `Status: ${project.status}`,
+            project.type ? `Type: ${project.type}` : null,
+            project.port ? `Port: ${project.port}` : null,
+        ]
+            .filter(Boolean)
+            .join("\n");
+        this.contextValue = `project-${project.status}`;
+    }
+}
+exports.ProjectItem = ProjectItem;
+class ProjectsTreeProvider {
+    context;
+    _onDidChangeTreeData = new vscode.EventEmitter();
+    onDidChangeTreeData = this._onDidChangeTreeData.event;
+    projects = [];
+    CACHE_KEY = "projects.cache";
+    constructor(context) {
+        this.context = context;
+    }
+    getTreeItem(element) {
+        return element;
+    }
+    getChildren() {
+        return this.projects.map((p) => new ProjectItem(p));
+    }
+    // ---------------------------------------------------------------------------
+    // Load from API (online)
+    // ---------------------------------------------------------------------------
+    async loadFromApi(apiClient) {
+        try {
+            const { data } = await apiClient.get("/api/users/me/projects", { params: { per_page: 50 } });
+            this.projects = data.items;
+            // Persist non-sensitive fields for offline use
+            await this.context.globalState.update(this.CACHE_KEY, this.projects);
+            this._onDidChangeTreeData.fire(undefined);
+        }
+        catch (err) {
+            if (err?.response?.status === 401) {
+                this.projects = [];
+                this._onDidChangeTreeData.fire(undefined);
+                return;
+            }
+            console.error("[ProjectsTreeProvider] Failed to load projects:", err);
+        }
+    }
+    // ---------------------------------------------------------------------------
+    // Load from cache (offline)
+    // ---------------------------------------------------------------------------
+    loadFromCache() {
+        const cached = this.context.globalState.get(this.CACHE_KEY, []);
+        this.projects = cached;
+        this._onDidChangeTreeData.fire(undefined);
+    }
+    async clearProjects(clearCache = true) {
+        this.projects = [];
+        if (clearCache) {
+            await this.context.globalState.update(this.CACHE_KEY, []);
+        }
+        this._onDidChangeTreeData.fire(undefined);
+    }
+    // ---------------------------------------------------------------------------
+    // Real-time update from WebSocket (update single item in-place)
+    // ---------------------------------------------------------------------------
+    updateProjectStatus(projectId, newStatus) {
+        const project = this.projects.find((p) => p.id === projectId);
+        if (project) {
+            project.status = newStatus;
+            this._onDidChangeTreeData.fire(undefined);
+        }
+    }
+}
+exports.ProjectsTreeProvider = ProjectsTreeProvider;
+
 
 /***/ })
 /******/ 	]);
