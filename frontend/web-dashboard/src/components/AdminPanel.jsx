@@ -11,6 +11,15 @@ const MOCK_USERS = [
   { id: 'user_4', name: 'Test User', email: 'user@example.com',                  role: 'user',   is_active: true,  created_at: '2026-03-01T12:00:00Z' },
 ]
 
+function formatDate(value) {
+  if (!value) return '—'
+  const hasTimezone = /[zZ]|[+-]\d{2}:?\d{2}$/.test(value)
+  const normalized = hasTimezone ? value : `${value}Z`
+  const date = new Date(normalized)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 // ── Logo ───────────────────────────────────────────────────────────────────────
 function Logo() {
   return (
@@ -246,7 +255,7 @@ function AdminPanel({ onBack }) {
                     <span><TechBadge name={p.type} /></span>
                     <span>{p.status || '—'}</span>
                     <span className="admin-table-date">
-                      {p.created_at ? new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                      {formatDate(p.created_at)}
                     </span>
                   </div>
                 ))}
@@ -295,7 +304,7 @@ function AdminPanel({ onBack }) {
 
                   {/* Join date */}
                   <span className="admin-table-date">
-                    {new Date(u.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    {formatDate(u.created_at)}
                   </span>
 
                   {/* Action buttons */}

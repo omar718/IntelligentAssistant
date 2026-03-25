@@ -6,8 +6,8 @@ class InstallationHistory(Base):
  
     id              = Column(Integer, primary_key=True, autoincrement=True)
     project_id      = Column(String(50), ForeignKey('projects.id'))
-    started_at      = Column(DateTime)
-    completed_at    = Column(DateTime)
+    started_at      = Column(DateTime(timezone=True))
+    completed_at    = Column(DateTime(timezone=True))
     success         = Column(Boolean)
     steps           = Column(JSON)   # Array of step objects
     errors          = Column(JSON)   # Array of error objects

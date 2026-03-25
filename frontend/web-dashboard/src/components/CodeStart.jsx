@@ -76,13 +76,27 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
     if (!gitUrl.trim()) return
     setError('')
     setPicking(true)
+    console.log('[CodeStart] Starting folder picker...', { gitUrl })
     try {
+      console.log('[CodeStart] Fetching /pick-folder from http://localhost:6009')
       const res = await fetch('http://localhost:6009/pick-folder')
-      if (res.status === 204) { setPicking(false); return }
+      console.log('[CodeStart] Folder picker response status:', res.status)
+      
+      if (res.status === 204) {
+        console.warn('[CodeStart] Folder picker returned 204; continuing with default clone directory')
+        setPicking(false)
+        onAnalyze(gitUrl, undefined)
+        return
+      }
+      
       const data = await res.json()
+      console.log('[CodeStart] Folder picker response data:', data)
       setPicking(false)
+      
+      console.log('[CodeStart] Calling onAnalyze with:', { gitUrl, path: data.path })
       onAnalyze(gitUrl, data.path || undefined)
-    } catch {
+    } catch (err) {
+      console.error('[CodeStart] Error in handleAnalyze:', err)
       setPicking(false)
       setError('Could not open folder picker — make sure the VS Code extension is running (press F5 in VS Code), then try again.')
     }
@@ -294,12 +308,12 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
       {infoOverlay === 'no-account' && (
         <InfoOverlay
           title="Oops!"
-          message="It seems that you don't have an account yet. Please sign up to launch your project."
+          message="It seems that you don't have an account yet. You can sign up, log in, or close this popup to continue and launch as guest."
           primaryLabel="Sign Up"
           onPrimary={() => { setInfoOverlay(null); setActiveModal('signup-modal') }}
           linkLabel={{ prefix: 'Already have an account?', action: 'Login' }}
           onLink={() => { setInfoOverlay(null); setActiveModal('login-modal') }}
-          onClose={() => setInfoOverlay(null)}
+          onClose={() => { setInfoOverlay(null); void handleAnalyze() }}
         />
       )}
 

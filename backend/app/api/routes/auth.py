@@ -6,6 +6,7 @@ from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import CurrentUser
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.redis import (
     forgot_limiter,
@@ -57,10 +58,10 @@ REFRESH_COOKIE = "refresh_token"
 COOKIE_OPTIONS = dict(
     key=REFRESH_COOKIE,
     httponly=True,
-    secure=True,
-    samesite="strict",
+    secure=not settings.DEBUG,
+    samesite="lax",
     max_age=7 * 24 * 3600,  # 7 days in seconds
-    path="/auth/refresh",   # Cookie only sent to refresh endpoint
+    path="/",   # Cookie only sent to refresh endpoint
 )
 
 
@@ -69,7 +70,7 @@ def _set_refresh_cookie(response: Response, raw_token: str) -> None:
 
 
 def _clear_refresh_cookie(response: Response) -> None:
-    response.delete_cookie(REFRESH_COOKIE, path="/auth/refresh")
+    response.delete_cookie(REFRESH_COOKIE, path="/")
 
 
 def _rate_limit_error(retry_after: int) -> HTTPException:
@@ -78,6 +79,12 @@ def _rate_limit_error(retry_after: int) -> HTTPException:
         detail="Too many requests",
         headers={"Retry-After": str(retry_after)},
     )
+
+
+def _as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +200,7 @@ async def refresh_token(
             detail="Session compromised. Please log in again.",
         )
 
-    if rt.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+    if _as_utc(rt.expires_at) < datetime.now(timezone.utc):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token expired")
 
     user = await get_user_by_id(db, rt.user_id)
@@ -312,7 +319,7 @@ async def get_my_projects(
     type: Optional[str] = None,
 ) -> PaginatedProjects:
     from sqlalchemy import select, func
-    from app.models.user import Project
+    from app.models.project import Project
 
     query = select(Project).where(Project.user_id == current_user.id)
 
@@ -349,7 +356,7 @@ async def get_my_stats(
     db: AsyncSession = Depends(get_db),
 ) -> UserStats:
     from sqlalchemy import select, func, case
-    from app.models.user import Project
+    from app.models.project import Project
 
     result = await db.execute(
         select(

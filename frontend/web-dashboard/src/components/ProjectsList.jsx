@@ -5,8 +5,21 @@ import TechBadge from './TechBadge'
 import '../styles/ProjectsList.css'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+function parseBackendDate(value) {
+  if (!value) return null
+  if (value instanceof Date) return value
+  if (typeof value !== 'string') return new Date(value)
+
+  const hasTimezone = /[zZ]|[+-]\d{2}:?\d{2}$/.test(value)
+  const normalized = hasTimezone ? value : `${value}Z`
+  return new Date(normalized)
+}
+
 function formatDate(iso) {
-  return new Date(iso).toLocaleDateString('en-US', {
+  const date = parseBackendDate(iso)
+  if (!date || Number.isNaN(date.getTime())) return 'N/A'
+
+  return date.toLocaleDateString('en-US', {
     year: 'numeric', month: 'short', day: 'numeric',
   })
 }
