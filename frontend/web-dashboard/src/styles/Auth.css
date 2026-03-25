@@ -152,6 +152,21 @@
   transform: translateY(0);
 }
 
+/* Forgot Password Link */
+.auth-forgot-password {
+  font-size: 0.8rem;
+  color: rgba(100, 180, 255, 0.8);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  align-self: flex-end;
+  margin-top: -0.1rem;
+}
+
+.auth-forgot-password:hover {
+  color: rgba(100, 180, 255, 1);
+  text-decoration: underline;
+}
+
 /* Switch text (login ↔ signup) */
 .auth-switch-text {
   margin: 1.25rem 0 0 0;
@@ -205,6 +220,127 @@
   to   { opacity: 1; }
 }
 
+/* Success State */
+.auth-success-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.auth-success-icon {
+  width: 4rem;
+  height: 4rem;
+  color: #4ade80;
+  animation: successPulse 0.6s ease-out;
+}
+
+@keyframes successPulse {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.auth-success-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #fff;
+  margin: 0;
+  text-align: center;
+}
+
+.auth-success-message {
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.8);
+  text-align: center;
+  margin: 0;
+  line-height: 1.6;
+}
+
+.auth-success-note {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: center;
+  margin: 0.5rem 0 0 0;
+  font-style: italic;
+}
+
+/* Email Verification Styles */
+.auth-verify-actions {
+  text-align: center;
+  margin: 1.5rem 0 0 0;
+}
+
+.auth-verify-text {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0;
+}
+
+.auth-success-text {
+  font-size: 0.85rem;
+  color: #4ade80;
+  margin: 0.5rem 0 0 0;
+  font-weight: 500;
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Verification Content */
+.auth-verification-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  margin: 2rem 0;
+  text-align: center;
+}
+
+.auth-verification-icon {
+  width: 3.5rem;
+  height: 3.5rem;
+  color: rgba(100, 180, 255, 0.8);
+  animation: emailSlide 0.5s ease;
+}
+
+@keyframes emailSlide {
+  0% {
+    transform: scale(0) rotateY(0);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1) rotateY(0);
+    opacity: 1;
+  }
+}
+
+.auth-verification-text {
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0;
+  line-height: 1.6;
+}
+
+.auth-verification-note {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0;
+  font-style: italic;
+}
+
 .auth-modal-overlay .auth-card {
   position: relative;
   animation: authCardIn 0.25s ease;
@@ -228,6 +364,74 @@
   color: #fff;
 }
 
+/* Password Requirements */
+.auth-password-requirements {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem 0;
+}
+
+.auth-requirement {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+  transition: all 0.3s ease;
+}
+
+.auth-requirement-icon {
+  width: 1.1rem;
+  height: 1.1rem;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #ff6b6b;
+  border-radius: 3px;
+  color: #ff6b6b;
+  transition: all 0.3s ease;
+  box-sizing: border-box;
+}
+
+.auth-requirement-icon svg {
+  width: 0.7rem;
+  height: 0.7rem;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.auth-requirement-met {
+  color: rgba(74, 222, 128, 0.95);
+}
+
+.auth-requirement-met .auth-requirement-icon {
+  border-color: #4ade80;
+  background: rgba(74, 222, 128, 0.1);
+  color: #4ade80;
+  animation: requirementCheck 0.5s ease;
+}
+
+.auth-requirement-met .auth-requirement-icon svg {
+  opacity: 1;
+}
+
+@keyframes requirementCheck {
+  0% {
+    transform: scale(0.3) rotate(-90deg);
+    background: rgba(74, 222, 128, 0);
+  }
+  50% {
+    transform: scale(1.15) rotate(15deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+    background: rgba(74, 222, 128, 0.1);
+  }
+}
+
 /* Responsive */
 @media (max-width: 480px) {
   .auth-card {
@@ -239,3 +443,53 @@
   }
 }
 
+/* Password Visibility Toggle */
+.password-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-wrapper .auth-input {
+  width: 100%;
+  padding-right: 2.8rem;
+  
+}
+
+.eye-btn {
+  position: absolute;
+  right: 0.8rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #6b6b88;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  transition: color 0.2s;
+}
+
+.eye-btn:hover {
+  color: #e8e8f0;
+}
+
+.eye-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Remove browser built-in password reveal icon */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none !important;
+  width: 0;
+  height: 0;
+}
+
+input[type="password"]::-webkit-contacts-auto-fill-button,
+input[type="password"]::-webkit-credentials-auto-fill-button {
+  visibility: hidden;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+} 

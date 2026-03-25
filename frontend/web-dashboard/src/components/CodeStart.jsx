@@ -2,6 +2,8 @@ import { useState, useRef, useEffect } from 'react'
 import '../styles/CodeStart.css'
 import LoginOverlay from './LoginOverlay'
 import SignupOverlay from './SignupOverlay'
+import ForgotPasswordOverlay from './ForgotPasswordOverlay'
+import EmailVerificationOverlay from './EmailVerificationOverlay'
 import { authApi } from '../api/client'
 
 // ── Reusable info overlay ──────────────────────────────────────────────────────
@@ -33,6 +35,7 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
   const [picking, setPicking] = useState(false)
   const [infoOverlay, setInfoOverlay] = useState(null)
   const [activeModal, setActiveModal] = useState(null)
+  const [verificationEmail, setVerificationEmail] = useState(null)
 
   const sidebarRef = useRef(null)
   const userMenuRef = useRef(null)
@@ -172,7 +175,7 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
                           <svg viewBox="0 0 24 24" fill="currentColor" className="sidebar-icon">
                             <path d="M11 7L9.6 8.4l2.6 2.6H2v2h10.2l-2.6 2.6L11 17l5-5-5-5zm9 12h-8v2h8c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-8v2h8v14z"/>
                             </svg>
-                            <span>Log In</span>
+                            <span>Login</span>
                             </button>
                           )}
           </nav>
@@ -220,7 +223,7 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
             onClick={() => setInfoOverlay('welcome')}
             title="Login"
           >
-            Log In
+            Login
           </button>
         )}
 
@@ -294,7 +297,7 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
           message="It seems that you don't have an account yet. Please sign up to launch your project."
           primaryLabel="Sign Up"
           onPrimary={() => { setInfoOverlay(null); setActiveModal('signup-modal') }}
-          linkLabel={{ prefix: 'Already have an account?', action: 'Log In' }}
+          linkLabel={{ prefix: 'Already have an account?', action: 'Login' }}
           onLink={() => { setInfoOverlay(null); setActiveModal('login-modal') }}
           onClose={() => setInfoOverlay(null)}
         />
@@ -304,7 +307,7 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
         <InfoOverlay
           title="Welcome!"
           message="Welcome to your favourite web project launcher. For the best experience please log in to your account."
-          primaryLabel="Log In"
+          primaryLabel="Login"
           onPrimary={() => { setInfoOverlay(null); setActiveModal('login-modal') }}
           linkLabel={{ prefix: "Don't have an account yet?", action: 'Sign Up' }}
           onLink={() => { setInfoOverlay(null); setActiveModal('signup-modal') }}
@@ -319,6 +322,7 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
           onLogin={onLogin}
           onNavigate={(page) => {
             if (page === 'signup-modal') setActiveModal('signup-modal')
+            else if (page === 'forgot-password-modal') setActiveModal('forgot-password-modal')
             else { setActiveModal(null); onNavigate(page) }
           }}
         />
@@ -329,6 +333,36 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
           onClose={() => setActiveModal(null)}
           onNavigate={(page) => {
             if (page === 'login-modal') setActiveModal('login-modal')
+            else { setActiveModal(null); onNavigate(page) }
+          }}
+          onVerificationNeeded={(email) => {
+            setVerificationEmail(email)
+            setActiveModal('verify-email-modal')
+          }}
+        />
+      )}
+
+      {activeModal === 'forgot-password-modal' && (
+        <ForgotPasswordOverlay
+          onClose={() => setActiveModal(null)}
+          onNavigate={(page) => {
+            if (page === 'login-modal') setActiveModal('login-modal')
+            else { setActiveModal(null); onNavigate(page) }
+          }}
+        />
+      )}
+
+      {activeModal === 'verify-email-modal' && verificationEmail && (
+        <EmailVerificationOverlay
+          email={verificationEmail}
+          onClose={() => { setActiveModal(null); setVerificationEmail(null) }}
+          onVerified={() => {
+            setActiveModal('login-modal')
+            setVerificationEmail(null)
+          }}
+          onNavigate={(page) => {
+            if (page === 'signup-modal') setActiveModal('signup-modal')
+            else if (page === 'login-modal') setActiveModal('login-modal')
             else { setActiveModal(null); onNavigate(page) }
           }}
         />
