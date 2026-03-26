@@ -5,6 +5,7 @@ import Processing from './components/Processing'
 import ProjectsList from './components/ProjectsList'
 import AdminPanel from './components/AdminPanel'
 import VSCodeModal from './components/VSCodeModal'
+import ResetPassword from './components/ResetPassword'
 import { authApi } from './api/client'
 
 // ── Protected route — only allows users with role ADMIN ───────────────────────
@@ -118,6 +119,9 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
+        {/* Password reset page — accessible without authentication */}
+        <Route path="/reset-password" element={<ResetPassword />} />
+
         {/* Main website */}
         <Route
           path="/*"
