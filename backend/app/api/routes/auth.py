@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi.responses import RedirectResponse
 from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -117,21 +118,21 @@ async def register(
 # GET /auth/verify/{token}
 # ---------------------------------------------------------------------------
 
-@auth_router.get("/auth/verify/{token}", response_model=MessageResponse)
-async def verify_email(token: str, db: AsyncSession = Depends(get_db)) -> MessageResponse:
+@auth_router.get("/auth/verify/{token}")
+async def verify_email(token: str, db: AsyncSession = Depends(get_db)):
     try:
         user_id = decode_signed_token(token, expected_purpose="email_verify")
     except JWTError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification link")
+        return RedirectResponse(url=f"{settings.APP_BASE_URL}/login?error=invalid_token")
 
     user = await get_user_by_id(db, user_id)
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        return RedirectResponse(url=f"{settings.APP_BASE_URL}/login?error=user_not_found")
 
     if not user.is_verified:
         await activate_user(db, user)
 
-    return MessageResponse(message="Email verified successfully. You may now log in.")
+    return RedirectResponse(url=f"{settings.APP_BASE_URL}/login?verified=true")
 
 
 # ---------------------------------------------------------------------------
