@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     EMAIL_FROM: str = "noreply@intelligent-assistant.dev"
 
     # App base URL (used for email links)
-    APP_BASE_URL: str = "http://localhost:3000"
+    APP_BASE_URL: str = "http://localhost:5173"
     API_BASE_URL: str = "http://localhost:8000"
 
     # GROQ (server-side only — NEVER sent to clients)
