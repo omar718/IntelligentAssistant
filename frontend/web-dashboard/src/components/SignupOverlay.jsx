@@ -16,9 +16,9 @@ function SignupOverlay({ onNavigate, onClose, onVerificationNeeded }) {
 
   // Password strength validation
   const hasCapitalLetter = /[A-Z]/.test(password)
-  const hasAtLeastSix = password.length >= 6
+  const hasAtLeastEight = password.length >= 8
   const hasNumber = /[0-9]/.test(password)
-  const isPasswordStrong = hasCapitalLetter && hasAtLeastSix && hasNumber
+  const isPasswordStrong = hasCapitalLetter && hasAtLeastEight && hasNumber
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -149,13 +149,13 @@ function SignupOverlay({ onNavigate, onClose, onVerificationNeeded }) {
                   </div>
                   <span>One capital letter (A-Z)</span>
                 </div>
-                <div className={`auth-requirement ${hasAtLeastSix ? 'auth-requirement-met' : ''}`}>
+                <div className={`auth-requirement ${hasAtLeastEight ? 'auth-requirement-met' : ''}`}>
                   <div className="auth-requirement-icon">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="20 6 9 17 4 12"></polyline>
                     </svg>
                   </div>
-                  <span>At least 6 characters</span>
+                  <span>At least 8 characters</span>
                 </div>
                 <div className={`auth-requirement ${hasNumber ? 'auth-requirement-met' : ''}`}>
                   <div className="auth-requirement-icon">

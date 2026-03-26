@@ -1,11 +1,12 @@
 import { useState } from 'react'
+import { authApi } from '../api/client'
 import '../styles/Auth.css'
 
 function EmailVerificationOverlay({ email, onNavigate, onClose, onVerified }) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [resendLoading, setResendLoading] = useState(false)
-  const [linkSent, setLinkSent] = useState(true)
+  const [linkSent, setLinkSent] = useState(false)
 
   const handleContinueToLogin = () => {
     // User clicked the verification link in their email
@@ -18,16 +19,14 @@ function EmailVerificationOverlay({ email, onNavigate, onClose, onVerified }) {
   }
 
   const handleResendLink = async () => {
+    if (!email || resendLoading) return
+
     setResendLoading(true)
     setError('')
+    setLinkSent(false)
 
     try {
-      // TODO: Call your resend verification link API here
-      // await authApi.resendVerificationLink({ email })
-      
-      // For now, just simulate the request
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      
+      await authApi.forgotPassword(email)
       setLinkSent(true)
     } catch (err) {
       const detail = err?.response?.data?.detail
@@ -58,17 +57,8 @@ function EmailVerificationOverlay({ email, onNavigate, onClose, onVerified }) {
             Click the link in your email to verify your account and activate your login.
           </p>
           <p className="auth-verification-note">
-            The link will expire in ...
+            The link will expire in 24 hours.
           </p>
-          <button 
-            type="button" 
-            className="auth-button" 
-            onClick={handleContinueToLogin}
-            disabled={loading}
-            style={{ marginTop: '1.5rem' }}
-          >
-            I've Verified My Email
-          </button>
         </div>
 
         {error && <p className="auth-error">{error}</p>}

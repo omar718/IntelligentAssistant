@@ -11,12 +11,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import projects
 from app.core.config import settings
 from app.api.routes.auth import auth_router
+from app.api.routes import analytics as admin_analytics   
+from app.api.routes import users as admin_users           
+from app.websocket.router import router as ws_router     
+
 
 
 
 app = FastAPI(
     title="Intelligent Assistant API",
-    version="0.1.0",
+    version="0.2.0",
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url="/redoc" if settings.DEBUG else None,
 
@@ -32,6 +36,9 @@ app.add_middleware(
 
 app.include_router(projects.router)
 app.include_router(auth_router, tags=["auth"])
+app.include_router(admin_analytics.router, prefix="/admin", tags=["admin-analytics"])
+app.include_router(admin_users.router, prefix="/admin", tags=["admin-users"])
+app.include_router(ws_router)
 
 @app.get("/health")
 async def health():

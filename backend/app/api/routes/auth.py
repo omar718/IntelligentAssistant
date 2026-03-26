@@ -97,10 +97,12 @@ async def register(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    client_ip = request.client.host
-    allowed, retry_after = await register_limiter.is_allowed(f"register:{client_ip}")
-    if not allowed:
-        raise _rate_limit_error(retry_after)
+    client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
+    # Rate limiting disabled in DEBUG mode for development
+    if not settings.DEBUG:
+        allowed, retry_after = await register_limiter.is_allowed(f"register:{client_ip}")
+        if not allowed:
+            raise _rate_limit_error(retry_after)
 
     existing = await get_user_by_email(db, body.email)
     if existing:
@@ -145,10 +147,12 @@ async def login(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
-    client_ip = request.client.host
-    allowed, retry_after = await login_limiter.is_allowed(f"login:{client_ip}")
-    if not allowed:
-        raise _rate_limit_error(retry_after)
+    client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
+    # Rate limiting disabled in DEBUG mode for development
+    if not settings.DEBUG:
+        allowed, retry_after = await login_limiter.is_allowed(f"login:{client_ip}")
+        if not allowed:
+            raise _rate_limit_error(retry_after)
 
     user = await get_user_by_email(db, body.email)
 
@@ -249,10 +253,12 @@ async def forgot_password(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    allowed, retry_after = await forgot_limiter.is_allowed(f"forgot:{body.email}")
-    if not allowed:
-        # Return identical body — never reveal enumeration info
-        return MessageResponse(message="If an account exists, you will receive an email")
+    # Rate limiting disabled in DEBUG mode for development
+    if not settings.DEBUG:
+        allowed, retry_after = await forgot_limiter.is_allowed(f"forgot:{body.email}")
+        if not allowed:
+            # Return identical body — never reveal enumeration info
+            return MessageResponse(message="If an account exists, you will receive an email")
 
     user = await get_user_by_email(db, body.email)
     if user and user.is_active:
@@ -271,14 +277,16 @@ async def reset_password(
     body: ResetPasswordRequest,
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    allowed, retry_after = await reset_limiter.is_allowed(f"reset:{body.token}")
-    if not allowed:
-        # Invalidate the token immediately on breach
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many attempts. Please request a new reset link.",
-            headers={"Retry-After": str(retry_after)},
-        )
+    # Rate limiting disabled in DEBUG mode for development
+    if not settings.DEBUG:
+        allowed, retry_after = await reset_limiter.is_allowed(f"reset:{body.token}")
+        if not allowed:
+            # Invalidate the token immediately on breach
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many attempts. Please request a new reset link.",
+                headers={"Retry-After": str(retry_after)},
+            )
 
     try:
         user_id = decode_signed_token(body.token, expected_purpose="password_reset")

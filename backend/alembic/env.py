@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '../.env'))
-load_dotenv(os.path.join(os.path.dirname(__file__), '../.env.local'), override=True)
+load_dotenv(os.path.join(os.path.dirname(__file__), '../.env.local'), override=False)
 
 config = context.config
 
@@ -15,7 +15,7 @@ if config.config_file_name is not None:
 
 database_url = os.getenv(
     "DATABASE_URL",
-    "postgresql://postgres:postgres@localhost:5432/intelligent_assistant"
+    "postgresql://postgres:postgres@db:5432/intelligent_assistant"
 )
 # Alembic uses a sync driver; strip +asyncpg if present
 database_url = database_url.replace("postgresql+asyncpg://", "postgresql://")

@@ -6,6 +6,7 @@ from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.core.security import decode_access_token
 from app.models.user import User
 from app.services.user_service import get_user_by_id
@@ -54,7 +55,13 @@ async def require_admin(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
     """Additional guard: require role == 'admin'."""
-    if current_user.role != "admin":
+    role_value = current_user.role.value if hasattr(current_user.role, "value") else current_user.role
+    if str(role_value).lower() != "admin":
+        if settings.DEBUG:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Admin access required (current role: {role_value})",
+            )
         raise _403_admin
     return current_user
 

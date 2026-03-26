@@ -85,7 +85,7 @@ export const authApi = {
     api.post('/auth/forgot-password', { email }).then(r => r.data),
 
   // Reset password using the token from the email
-  resetPassword: (data: { token: string; new_password: string }) =>
+  resetPassword: (data: { token: string; password: string; confirm_password: string }) =>
     api.post('/auth/reset-password', data).then(r => r.data),
 };
 
