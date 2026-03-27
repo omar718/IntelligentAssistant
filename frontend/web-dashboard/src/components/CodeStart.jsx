@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import '../styles/CodeStart.css'
 import LoginOverlay from './LoginOverlay'
 import SignupOverlay from './SignupOverlay'
@@ -28,6 +29,8 @@ function InfoOverlay({ title, message, primaryLabel, onPrimary, linkLabel, onLin
 
 // ── Main component ─────────────────────────────────────────────────────────────
 function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
+  const location = useLocation()
+  const routerNavigate = useNavigate()
   const [gitUrl, setGitUrl] = useState('')
   const [error, setError] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -49,6 +52,17 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const auth = params.get('auth')
+
+    if (auth === 'login') {
+      setInfoOverlay(null)
+      setActiveModal('login-modal')
+      routerNavigate('/', { replace: true })
+    }
+  }, [location.search, routerNavigate])
 
   const isValidGitHubUrl = (url) => {
     const pattern = /^https?:\/\/(www\.)?github\.com\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+(\.git)?\/?$/

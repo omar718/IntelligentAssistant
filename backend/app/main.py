@@ -21,7 +21,7 @@ logger = logging.getLogger("app.main")
 
 app = FastAPI(
     title="Intelligent Assistant API",
-    version="0.1.0",
+    version="0.2.0",
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url="/redoc" if settings.DEBUG else None,
 )
@@ -43,20 +43,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.middleware("http")
-async def add_process_time_header(request: Request, call_next: Callable):
-    start_time = time.time()
-    try:
-        response = await call_next(request)
-        process_time = time.time() - start_time
-        response.headers["X-Process-Time"] = str(process_time)
-        return response
-    except Exception as e:
-        logger.exception("Global unhandled exception in middleware: %s", e)
-        return JSONResponse(
-            status_code=500,
-            content={"detail": "An internal server error occurred. Please try again later."}
-        )
+app.include_router(projects.router)
+app.include_router(auth_router, tags=["auth"])
+app.include_router(admin_analytics.router, prefix="/admin", tags=["admin-analytics"])
+app.include_router(admin_users.router, prefix="/admin", tags=["admin-users"])
+app.include_router(ws_router)
 
 # ---------------------------------------------------------------------------
 # Routes
