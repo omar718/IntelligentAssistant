@@ -28,6 +28,8 @@ def send_verification_email(user_id: str, email: str) -> None:
     """
     token = create_signed_token(user_id, purpose="email_verify", ttl_hours=24)
     link = f"{settings.API_BASE_URL}/auth/verify/{token}"
+    import logging
+    logging.getLogger("app.services.email").info(f"VERIFICATION LINK: {link}")
 
     html = f"""
     <h2>Verify your email</h2>

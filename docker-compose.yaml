@@ -28,6 +28,7 @@ services:
     env_file:
       - ./backend/.env
     volumes:
+      - ./backend:/app
       - C:/tmp/intelligent-assistant:/tmp/intelligent-assistant
       - C:/Users:/hostusers
     environment:
@@ -44,6 +45,7 @@ services:
     env_file:
       - ./backend/.env
     volumes:
+      - ./backend:/app
       - C:/tmp/intelligent-assistant:/tmp/intelligent-assistant
       - C:/Users:/hostusers
     environment:

@@ -1,5 +1,6 @@
+import json
 import time
-from typing import Optional
+from typing import Optional, Any, Dict
 
 import redis.asyncio as aioredis
 
@@ -21,6 +22,40 @@ async def get_redis() -> aioredis.Redis:
             decode_responses=True,
         )
     return _redis
+
+
+# ---------------------------------------------------------------------------
+# Task State Management (Redis-backed)
+# ---------------------------------------------------------------------------
+
+TASK_STATE_TTL = 3600  # 1 hour
+
+async def set_task_state(task_id: str, state: Dict[str, Any]) -> None:
+    """Store task progress/metadata in Redis with a 1-hour TTL."""
+    redis = await get_redis()
+    key = f"task:state:{task_id}"
+    await redis.set(key, json.dumps(state), ex=TASK_STATE_TTL)
+
+async def get_task_state(task_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieve task progress/metadata from Redis."""
+    redis = await get_redis()
+    key = f"task:state:{task_id}"
+    data = await redis.get(key)
+    if data:
+        return json.loads(data)
+    return None
+
+async def set_task_cancelled(task_id: str) -> None:
+    """Mark a task as cancelled in Redis."""
+    redis = await get_redis()
+    key = f"task:cancelled:{task_id}"
+    await redis.set(key, "1", ex=TASK_STATE_TTL)
+
+async def is_task_cancelled(task_id: str) -> bool:
+    """Check if a task has been marked as cancelled."""
+    redis = await get_redis()
+    key = f"task:cancelled:{task_id}"
+    return await redis.exists(key) > 0
 
 
 # ---------------------------------------------------------------------------

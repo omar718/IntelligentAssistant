@@ -19,6 +19,12 @@ from app.core.database import get_db                     # ← one import, alway
 from app.api.dependencies import CurrentUser
 from app.db.crud import project_crud
 from app.models.project import Project, ProjectStatus
+from app.core.redis import (
+    set_task_state,
+    get_task_state,
+    is_task_cancelled,
+    set_task_cancelled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,51 +46,46 @@ PATH_MAPPINGS = [
     ),
 ]
 
-TASK_PROGRESS: Dict[str, Dict[str, Any]] = {}
-TASK_PROGRESS_LOCK = threading.Lock()
-TASK_CANCELLED: set[str] = set()
+# We still need this for subprocess management (process instance cannot be serialized to Redis)
 TASK_PROCESSES: Dict[str, subprocess.Popen] = {}
+TASK_PROCESSES_LOCK = threading.Lock()
 
 
 class TaskCancelledError(Exception):
     pass
 
 
-def _is_task_cancelled(task_id: Optional[str]) -> bool:
-    if not task_id:
-        return False
-    with TASK_PROGRESS_LOCK:
-        return task_id in TASK_CANCELLED
-
-
 def _register_task_process(task_id: Optional[str], process: subprocess.Popen) -> None:
     if not task_id:
         return
-    with TASK_PROGRESS_LOCK:
+    with TASK_PROCESSES_LOCK:
         TASK_PROCESSES[task_id] = process
 
 
 def _unregister_task_process(task_id: Optional[str]) -> None:
     if not task_id:
         return
-    with TASK_PROGRESS_LOCK:
+    with TASK_PROCESSES_LOCK:
         TASK_PROCESSES.pop(task_id, None)
 
 
-def _request_task_cancel(task_id: str) -> bool:
-    with TASK_PROGRESS_LOCK:
-        if task_id not in TASK_PROGRESS:
-            return False
-        TASK_CANCELLED.add(task_id)
+async def _request_task_cancel(task_id: str) -> bool:
+    # First mark as cancelled in Redis (persistent)
+    await set_task_cancelled(task_id)
+    
+    # Then try to kill the local process if it exists on THIS worker
+    with TASK_PROCESSES_LOCK:
         process = TASK_PROCESSES.get(task_id)
 
     if process and process.poll() is None:
+        logger.info("Terminating local process for task %s", task_id)
         process.terminate()
+        return True
+        
+    return True # Return true because we marked it in Redis
 
-    return True
 
-
-def set_task_progress(
+async def set_task_progress(
     task_id: str,
     *,
     stage: str,
@@ -102,17 +103,19 @@ def set_task_progress(
         "message": message,
         "done": done,
         "error": error,
+        "updated_at": time.time()
     }
     if project_id:
         payload["project_id"] = project_id
     if host_path:
         payload["host_path"] = host_path
 
-    with TASK_PROGRESS_LOCK:
-        previous = TASK_PROGRESS.get(task_id, {})
-        if previous.get("done"):
-            return
-        TASK_PROGRESS[task_id] = payload
+    # Check for existing "done" state to avoid overwriting final results
+    previous = await get_task_state(task_id)
+    if previous and previous.get("done"):
+        return
+
+    await set_task_state(task_id, payload)
 
 def host_path_to_container(host_path: str) -> Path:
     norm = host_path.replace("\\", "/").rstrip("/")
@@ -123,7 +126,6 @@ def host_path_to_container(host_path: str) -> Path:
     raise ValueError(
         f"The selected folder '{host_path}' is not accessible to the backend container. "
         f"It must be under one of: {[m[0] for m in PATH_MAPPINGS]}. "
-        f"To add more paths, mount the folder in docker-compose.yaml."
     )
 
 def container_path_to_host(container_path: Path) -> str:
@@ -159,7 +161,7 @@ async def create_project(
     logger.info("current_user: %s", current_user)  # ← add this
     logger.info("current_user.id: %s", current_user.id)  # ← and this
 
-    set_task_progress(
+    await set_task_progress(
         task_id,
         stage="queued",
         progress=1,
@@ -168,7 +170,7 @@ async def create_project(
 
 
     try:
-        if _is_task_cancelled(task_id):
+        if await is_task_cancelled(task_id):
             raise TaskCancelledError("task_cancelled")
 
         if req.source.type == "git":
@@ -181,14 +183,14 @@ async def create_project(
                     raise HTTPException(status_code=400, detail=str(e))
             else:
                 target_base = CLONE_BASE_DIR
-            set_task_progress(
+            await set_task_progress(
                 task_id,
                 stage="cloning",
                 progress=5,
                 message="Cloning repository...",
             )
             loop = asyncio.get_event_loop()
-            project_path = await loop.run_in_executor(None, _clone_repo, req.source.url, target_base, task_id)
+            project_path = await loop.run_in_executor(None, _clone_repo, req.source.url, target_base, task_id, loop)
 
         elif req.source.type == "local":
             if not req.source.path:
@@ -196,7 +198,7 @@ async def create_project(
             project_path = Path(req.source.path)
             if not project_path.exists():
                 raise HTTPException(status_code=400, detail="path does not exist")
-            set_task_progress(
+            await set_task_progress(
                 task_id,
                 stage="cloning",
                 progress=70,
@@ -205,10 +207,10 @@ async def create_project(
         else:
             raise HTTPException(status_code=400, detail="invalid source type")
 
-        if _is_task_cancelled(task_id):
+        if await is_task_cancelled(task_id):
             raise TaskCancelledError("task_cancelled")
 
-        set_task_progress(
+        await set_task_progress(
             task_id,
             stage="analyzing",
             progress=78,
@@ -224,7 +226,7 @@ async def create_project(
             raise HTTPException(status_code=500, detail=f"Project analysis failed: {e}")
 
         try:
-            set_task_progress(
+            await set_task_progress(
                 task_id,
                 stage="analyzing",
                 progress=86,
@@ -235,13 +237,13 @@ async def create_project(
         except Exception as e:
             logger.warning("NLP analysis failed (non-fatal): %s", e)
 
-        if _is_task_cancelled(task_id):
+        if await is_task_cancelled(task_id):
             raise TaskCancelledError("task_cancelled")
 
         project_name = Path(str(project_path)).name
         logger.info("Saving project '%s' to database", project_name)
         try:
-            set_task_progress(
+            await set_task_progress(
                 task_id,
                 stage="analyzing",
                 progress=93,
@@ -267,7 +269,7 @@ async def create_project(
             raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
         host_path = container_path_to_host(project_path)
-        set_task_progress(
+        await set_task_progress(
             task_id,
             stage="launching",
             progress=100,
@@ -291,7 +293,7 @@ async def create_project(
         }
 
     except TaskCancelledError:
-        set_task_progress(
+        await set_task_progress(
             task_id,
             stage="failed",
             progress=100,
@@ -302,7 +304,7 @@ async def create_project(
         raise HTTPException(status_code=409, detail="Task cancelled")
 
     except HTTPException:
-        set_task_progress(
+        await set_task_progress(
             task_id,
             stage="failed",
             progress=100,
@@ -313,7 +315,7 @@ async def create_project(
         raise
     except Exception as e:
         logger.exception("Unexpected error in create_project: %s", e)
-        set_task_progress(
+        await set_task_progress(
             task_id,
             stage="failed",
             progress=100,
@@ -329,8 +331,7 @@ async def get_project_task_status(
     task_id: str,
     current_user: CurrentUser,
 ):
-    with TASK_PROGRESS_LOCK:
-        task = TASK_PROGRESS.get(task_id)
+    task = await get_task_state(task_id)
 
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -343,11 +344,11 @@ async def cancel_project_task(
     task_id: str,
     current_user: CurrentUser,
 ):
-    cancelled = _request_task_cancel(task_id)
-    if not cancelled:
+    success = await _request_task_cancel(task_id)
+    if not success:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    set_task_progress(
+    await set_task_progress(
         task_id,
         stage="cloning",
         progress=50,
@@ -382,7 +383,7 @@ async def get_project(
 # GET api/user/me/projects is defined in auth.py
 #------------------------------------------------
 
-def _update_git_phase_progress(task_id: Optional[str], base: int, span: int, line: str) -> Optional[float]:
+def _update_git_phase_progress(task_id: Optional[str], base: int, span: int, line: str, loop: asyncio.AbstractEventLoop) -> Optional[float]:
     if not task_id:
         return None
 
@@ -396,18 +397,21 @@ def _update_git_phase_progress(task_id: Optional[str], base: int, span: int, lin
 
     raw_percent = max(0, min(100, int(match.group(1))))
     progress_value = base + (span * raw_percent / 100.0)
-    set_task_progress(
-        task_id,
-        stage="cloning",
-        progress=progress_value,
-        message=cleaned,
+    
+    # Schedule Redis update on the main event loop
+    asyncio.run_coroutine_threadsafe(
+        set_task_progress(task_id, stage="cloning", progress=progress_value, message=cleaned),
+        loop
     )
     return progress_value
 
 
-def _run_git_with_progress(cmd: list[str], task_id: Optional[str], base: int, span: int, start_message: str):
+def _run_git_with_progress(cmd: list[str], task_id: Optional[str], base: int, span: int, start_message: str, loop: asyncio.AbstractEventLoop):
     if task_id:
-        set_task_progress(task_id, stage="cloning", progress=base, message=start_message)
+        asyncio.run_coroutine_threadsafe(
+            set_task_progress(task_id, stage="cloning", progress=base, message=start_message),
+            loop
+        )
     current_progress = float(base)
     last_heartbeat = time.monotonic()
 
@@ -452,13 +456,11 @@ def _run_git_with_progress(cmd: list[str], task_id: Optional[str], base: int, sp
 
     eof_count = 0
     while eof_count < 2:
-        if _is_task_cancelled(task_id):
+        # Check cancellation state in Redis (via loop)
+        future = asyncio.run_coroutine_threadsafe(is_task_cancelled(task_id), loop)
+        if future.result():
             if process.poll() is None:
                 process.terminate()
-                try:
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    process.kill()
             _unregister_task_process(task_id)
             raise TaskCancelledError("task_cancelled")
 
@@ -467,11 +469,9 @@ def _run_git_with_progress(cmd: list[str], task_id: Optional[str], base: int, sp
             max_fallback = float(base + span - 2)
             if current_progress < max_fallback:
                 current_progress = min(max_fallback, current_progress + 1)
-                set_task_progress(
-                    task_id,
-                    stage="cloning",
-                    progress=current_progress,
-                    message="Cloning repository...",
+                asyncio.run_coroutine_threadsafe(
+                    set_task_progress(task_id, stage="cloning", progress=current_progress, message="Cloning repository..."),
+                    loop
                 )
             last_heartbeat = now
 
@@ -486,7 +486,7 @@ def _run_git_with_progress(cmd: list[str], task_id: Optional[str], base: int, sp
             eof_count += 1
             continue
 
-        parsed_progress = _update_git_phase_progress(task_id, base, span, chunk)
+        parsed_progress = _update_git_phase_progress(task_id, base, span, chunk, loop)
         if parsed_progress is not None:
             current_progress = max(current_progress, parsed_progress)
             last_heartbeat = time.monotonic()
@@ -497,28 +497,28 @@ def _run_git_with_progress(cmd: list[str], task_id: Optional[str], base: int, sp
     try:
         return_code = process.wait()
         if return_code != 0:
-            if _is_task_cancelled(task_id):
+            future = asyncio.run_coroutine_threadsafe(is_task_cancelled(task_id), loop)
+            if future.result():
                 raise TaskCancelledError("task_cancelled")
             raise subprocess.CalledProcessError(return_code, cmd)
     finally:
         _unregister_task_process(task_id)
 
     if task_id:
-        set_task_progress(
-            task_id,
-            stage="cloning",
-            progress=base + span,
-            message="Repository fetched.",
+        asyncio.run_coroutine_threadsafe(
+            set_task_progress(task_id, stage="cloning", progress=base + span, message="Repository fetched."),
+            loop
         )
 
 
-def _clone_repo(git_url: str, base_dir: Path = None, task_id: Optional[str] = None) -> Path:
+def _clone_repo(git_url: str, base_dir: Path, task_id: Optional[str], loop: asyncio.AbstractEventLoop) -> Path:
     clone_base = base_dir if base_dir is not None else CLONE_BASE_DIR
     clone_base.mkdir(parents=True, exist_ok=True)
     repo_name = git_url.rstrip('/').split('/')[-1].removesuffix('.git')
     target = clone_base / repo_name
     if target.exists():
-        _run_git_with_progress(['git', '-C', str(target), 'pull', '--progress'], task_id, 10, 60, 'Updating existing repository...')
+        _run_git_with_progress(['git', '-C', str(target), 'pull', '--progress'], task_id, 10, 60, 'Updating repository...', loop)
     else:
-        _run_git_with_progress(['git', 'clone', '--progress', git_url, str(target)], task_id, 10, 60, 'Cloning repository...')
+        _run_git_with_progress(['git', 'clone', '--progress', git_url, str(target)], task_id, 10, 60, 'Cloning repository...', loop)
     return target
+```

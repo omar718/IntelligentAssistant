@@ -110,21 +110,23 @@ function Processing({ gitUrl, cloneDir, onBack }) {
           return
         }
         
-        // Stop after too many errors (likely broken task)
+        // Handle 404 (Not Found) with retries (backend might be slow to write to Redis)
+        if (statusCode === 404) {
+          notFoundCount += 1
+          if (notFoundCount >= 15) { // Wait ~10 seconds (15 * 700ms)
+            finished = true
+            if (pollInterval) clearInterval(pollInterval)
+            setError('Task status not found. The backend might have restarted.')
+          }
+          return
+        }
+
+        // Stop after too many other errors (likely broken connection)
         if (errorCount >= maxErrors) {
           finished = true
           if (pollInterval) clearInterval(pollInterval)
           console.log('[Processing] Too many poll errors, stopping')
           setError(`Task polling failed repeatedly: ${errMsg}`)
-          return
-        }
-        
-        if (statusCode === 404) {
-          notFoundCount += 1
-          if (createFailed && notFoundCount >= 20) {
-            if (pollInterval) clearInterval(pollInterval)
-            setError('Task status not found after project start.')
-          }
           return
         }
         
