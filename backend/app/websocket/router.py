@@ -10,6 +10,7 @@ Events: installation_progress | log | status_change
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from collections import defaultdict
@@ -20,10 +21,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.core.security import decode_access_token
+from app.core.redis import get_redis
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["websocket"])
+
+
+async def _stream_project_events(project_id: str, websocket: WebSocket) -> None:
+    """Forward worker-published Redis events for a project to a connected client."""
+    redis = await get_redis()
+    pubsub = redis.pubsub()
+    channel = f"project_events:{project_id}"
+    await pubsub.subscribe(channel)
+
+    try:
+        while True:
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            if message and message.get("type") == "message":
+                data = message.get("data")
+                if isinstance(data, str):
+                    await websocket.send_text(data)
+            await asyncio.sleep(0.05)
+    finally:
+        await pubsub.unsubscribe(channel)
+        await pubsub.close()
 
 
 # ─── Connection Manager ───────────────────────────────────────────────────────
@@ -98,18 +120,12 @@ def make_status_event(old_status: str, new_status: str) -> dict[str, Any]:
 async def websocket_project(
     websocket: WebSocket,
     project_id: str,
-    token: str = Query(..., description="Access JWT"),
+    token: str | None = Query(default=None, description="Optional access JWT"),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    # 1. Validate JWT
-    try:
-        payload = decode_access_token(token)
-        user_id: str = payload["sub"]
-    except Exception:
-        await websocket.close(code=4001, reason="Invalid or expired token")
-        return
+    user_id = "anonymous"
 
-    # 2. Verify project ownership
+    # 1. Verify project existence / ownership
     from sqlalchemy import text
     row = (
         await db.execute(
@@ -122,12 +138,23 @@ async def websocket_project(
         await websocket.close(code=4004, reason="Project not found")
         return
 
-    if row.user_id != user_id:
-        await websocket.close(code=4003, reason="Forbidden")
-        return
+    # If a token is provided, enforce ownership. If no token is provided,
+    # allow read-only progress stream for install UX.
+    if token:
+        try:
+            payload = decode_access_token(token)
+            user_id = payload["sub"]
+        except Exception:
+            await websocket.close(code=4001, reason="Invalid or expired token")
+            return
 
-    # 3. Accept and register connection
+        if row.user_id != user_id:
+            await websocket.close(code=4003, reason="Forbidden")
+            return
+
+    # 2. Accept and register connection
     await manager.connect(project_id, websocket, user_id)
+    events_task = asyncio.create_task(_stream_project_events(project_id, websocket))
 
     try:
         # Send a welcome / current-state snapshot
@@ -135,6 +162,23 @@ async def websocket_project(
             websocket,
             {"type": "connected", "project_id": project_id},
         )
+
+        row_status = (
+            await db.execute(
+                text("SELECT status, port FROM projects WHERE id = :pid"),
+                {"pid": project_id},
+            )
+        ).one_or_none()
+        if row_status is not None:
+            await manager.send_personal(
+                websocket,
+                {
+                    "type": "status_change",
+                    "old_status": "connected",
+                    "new_status": row_status.status,
+                    "port": row_status.port,
+                },
+            )
 
         # Keep alive: listen for ping frames or client messages
         while True:
@@ -150,4 +194,7 @@ async def websocket_project(
     except WebSocketDisconnect:
         pass
     finally:
+        events_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await events_task
         await manager.disconnect(project_id, websocket, user_id)

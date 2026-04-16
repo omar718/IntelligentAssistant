@@ -20,7 +20,7 @@
     "workspaceContains:**"
   ],
   "main": "./dist/extension.js",
-"contributes": {
+  "contributes": {
     "viewsContainers": {
       "activitybar": [
         {
@@ -34,29 +34,13 @@
       "project-assistant-sidebar": [
         {
           "type": "webview",
-          "id": "project-assistant.assistant",
-          "name": "Chat Assistant",
-          "icon": "$(comment-discussion)"
-        },
-        {
-          "type": "tree",
-          "id": "projectAssistant.projects",
-          "name": "My Projects",
-          "icon": "$(repo)"
+          "id": "projectAssistant.apiOutput",
+          "name": "",
+          "icon": "$(output)"
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "projectAssistant.projects",
-        "contents": "No authenticated projects.\n[Sign In](command:project-assistant.login) • [Sign Out](command:project-assistant.logout)"
-      }
-    ],
     "commands": [
-      {
-        "command": "project-assistant.openAssistant",
-        "title": "Open Project Assistant"
-      },
       {
         "command": "project-assistant.login",
         "title": "Project Assistant: Sign In",
@@ -74,27 +58,6 @@
       {
         "command": "project-assistant.inspectAuthState",
         "title": "Project Assistant: Inspect Auth State"
-      }
-    ],
-    "menus": {
-      "view/title": [
-        {
-          "command": "project-assistant.login",
-          "when": "view == projectAssistant.projects && !projectAssistant.authenticated",
-          "group": "navigation@9"
-        },
-        {
-          "command": "project-assistant.logout",
-          "when": "view == projectAssistant.projects && projectAssistant.authenticated",
-          "group": "navigation@10"
-        }
-      ]
-    },
-    "keybindings": [
-      {
-        "command": "project-assistant.openAssistant",
-        "key": "ctrl+shift+l",
-        "mac": "cmd+shift+l"
       }
     ]
   },

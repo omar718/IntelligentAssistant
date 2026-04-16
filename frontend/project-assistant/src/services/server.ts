@@ -2,10 +2,10 @@ import * as http from 'http';
 import { sendChatRequest } from './llmService';
 
 let server: http.Server | null = null;
-let _openFolderCallback: ((folderPath: string) => void) | null = null;
+let _openFolderCallback: ((folderPath: string, projectId?: string) => void) | null = null;
 let _pickFolderCallback: (() => Promise<string | null>) | null = null;
 
-export function registerOpenFolderCallback(cb: (folderPath: string) => void) {
+export function registerOpenFolderCallback(cb: (folderPath: string, projectId?: string) => void) {
   _openFolderCallback = cb;
 }
 
@@ -69,13 +69,14 @@ export function startServer(port: number = 6009, modelId?: string): Promise<numb
           try {
             const data = JSON.parse(body);
             const folderPath: string = data.path;
+            const projectId: string | undefined = data.project_id;
             if (!folderPath) {
               res.writeHead(400, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ error: 'Missing "path" in request body.' }));
               return;
             }
             if (_openFolderCallback) {
-              _openFolderCallback(folderPath);
+              _openFolderCallback(folderPath, projectId);
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ success: true }));
             } else {
