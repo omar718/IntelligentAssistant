@@ -15,10 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit_log import AuditLog
 from app.models.user import User, UserRole
+from app.models.project import Project
 from app.schemas.admin import (
     AdminUserOut,
     AdminUserPage,
     AdminUserPatch,
+    AdminProjectOut,
+    AdminProjectPage,
     AnalyticsOut,
     AuditLogOut,
     AuditLogPage,
@@ -95,15 +98,14 @@ async def list_users(
     result = await db.execute(stmt)
     rows = result.scalars().all()
 
-    # Fetch install counts using text() as requested
+    # Fetch project counts per user
     if rows:
         ids = [u.id for u in rows]
         install_sql = text(
-            "SELECT p.user_id, COUNT(*) AS cnt "
-            "FROM installation_history ih "
-            "JOIN projects p ON p.id = ih.project_id "
-            "WHERE p.user_id = ANY(:ids) "
-            "GROUP BY p.user_id"
+            "SELECT user_id, COUNT(*) AS cnt "
+            "FROM projects "
+            "WHERE user_id = ANY(:ids) "
+            "GROUP BY user_id"
         )
         install_result = await db.execute(install_sql, {"ids": ids})
         install_map = {r.user_id: r.cnt for r in install_result.all()}
@@ -112,8 +114,19 @@ async def list_users(
 
     items = []
     for u in rows:
-        out = AdminUserOut.model_validate(u)
-        out.install_count = install_map.get(u.id, 0)
+        # Create a dict from the user object with all columns
+        user_dict = {
+            'id': u.id,
+            'name': u.name,
+            'email': u.email,
+            'role': u.role,
+            'is_active': u.is_active,
+            'is_verified': u.is_verified,
+            'created_at': u.created_at,
+            'last_login': u.last_login,
+            'install_count': install_map.get(u.id, 0)
+        }
+        out = AdminUserOut.model_validate(user_dict)
         items.append(out)
 
     pages = max(1, -(-total // page_size))
@@ -175,6 +188,38 @@ async def patch_user(
     return user
 
 
+async def delete_user(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    reason: str | None = None,
+    actor_id: str,
+    actor_ip: str | None = None,
+) -> None:
+    """Delete a user from the database."""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Store user info for audit log
+    user_email = user.email
+    user_name = user.name
+    
+    # Delete the user
+    await db.delete(user)
+    
+    # Log the deletion
+    await write_audit(
+        db,
+        actor_id=actor_id,
+        target_type="user",
+        target_id=user_id,
+        action="user.deleted",
+        metadata={"user_email": user_email, "user_name": user_name, "reason": reason, "ip": actor_ip},
+    )
+    await db.commit()
+
+
 # ─── Audit Log Listing ────────────────────────────────────────────────────────
 
 async def list_audit_logs(
@@ -231,6 +276,33 @@ async def get_user_detail(db: AsyncSession, user_id: str) -> AdminUserOut:
         raise HTTPException(status_code=404, detail="User not found")
     
     return AdminUserOut.model_validate(user)
+
+
+async def list_projects(db: AsyncSession) -> AdminProjectPage:
+    """Fetch all projects from the database."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Get total count
+        result = await db.execute(select(func.count()).select_from(Project))
+        total = result.scalar_one()
+        logger.info(f"[admin_service] Total projects in DB: {total}")
+        
+        # Get all projects sorted by creation date
+        stmt = select(Project).order_by(Project.created_at.desc())
+        result = await db.execute(stmt)
+        projects = result.scalars().all()
+        logger.info(f"[admin_service] Fetched {len(projects)} projects from DB")
+        
+        # Convert to AdminProjectOut schemas
+        items = [AdminProjectOut.model_validate(p) for p in projects]
+        
+        logger.info(f"[admin_service] Successfully converted {len(items)} projects to AdminProjectOut")
+        return AdminProjectPage(items=items, total=total)
+    except Exception as e:
+        logger.error(f"[admin_service] list_projects failed: {str(e)}", exc_info=True)
+        raise
 
 
 async def get_analytics(

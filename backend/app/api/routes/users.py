@@ -4,13 +4,15 @@ All routes require role == 'admin' via the require_admin dependency.
 """
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+import logging
 
 from app.api.dependencies import require_admin
 from app.core.database import get_db
 from app.models.user import User
-from app.schemas.admin import AdminUserOut, AdminUserPage, AdminUserPatch, AuditLogPage
+from app.schemas.admin import AdminUserOut, AdminUserPage, AdminUserPatch, AdminUserDelete, AdminProjectPage, AuditLogPage
 from app.services import admin_service
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -26,7 +28,8 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_admin),
 ) -> AdminUserPage:
-    return await admin_service.list_users(
+    logger.info(f"[ADMIN API] Fetching users: search={search}, role={role}, is_active={is_active}, page={page}, page_size={page_size}")
+    result = await admin_service.list_users(
         db,
         search=search,
         role=role,
@@ -36,6 +39,10 @@ async def list_users(
         page=page,
         page_size=page_size,
     )
+    logger.info(f"[ADMIN API] Returning {len(result.items)} users out of {result.total} total. Pages: {result.pages}")
+    for user in result.items:
+        logger.info(f"[ADMIN API]   - {user.name} ({user.email}): verified={user.is_verified}, active={user.is_active}")
+    return result
 
 
 @router.get("/users/{user_id}", response_model=AdminUserOut)
@@ -66,6 +73,25 @@ async def patch_user(
     return AdminUserOut.model_validate(user)
 
 
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    payload: AdminUserDelete,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> dict:
+    actor_ip = request.client.host if request.client else None
+    await admin_service.delete_user(
+        db,
+        user_id=user_id,
+        reason=payload.reason,
+        actor_id=admin.id,
+        actor_ip=actor_ip,
+    )
+    return {"message": "User deleted successfully"}
+
+
 @router.get("/users/{user_id}/audit-logs", response_model=AuditLogPage)
 async def get_user_audit_logs(
     user_id: str,
@@ -86,3 +112,15 @@ async def get_user_audit_logs(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get("/projects", response_model=AdminProjectPage)
+async def list_projects(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+) -> AdminProjectPage:
+    """Fetch all projects from the database."""
+    logger.info("[ADMIN API] Fetching all projects")
+    result = await admin_service.list_projects(db)
+    logger.info(f"[ADMIN API] Returning {len(result.items)} projects")
+    return result

@@ -31,7 +31,7 @@ function SignupOverlay({ onNavigate, onClose, onVerificationNeeded }) {
     // Validate password strength
     if (password.trim() && !isPasswordStrong) {
       setEmptyFields({})
-      setError('Password must contain at least one capital letter, 6+ characters, and a number.')
+      setError('Password must contain at least one capital letter, 8+ characters, and a number.')
       return
     }
     if (!confirmPassword.trim()) empty.confirmPassword = true

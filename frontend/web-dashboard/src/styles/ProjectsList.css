@@ -73,9 +73,18 @@
 
 .projects-title-row {
   display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.2rem;
+  width: 100%;
+  max-width: 860px;
+  margin-bottom: 0.4rem;
+}
+
+.projects-title-block {
+  display: flex;
   align-items: baseline;
   gap: 1rem;
-  margin-bottom: 0.4rem;
 }
 
 .projects-title {
@@ -97,6 +106,45 @@
   color: rgba(255, 255, 255, 0.55);
   margin: 0 0 2.5rem 0;
   font-weight: 300;
+  width: 100%;
+  max-width: 860px;
+}
+
+.projects-search-wrap {
+  position: relative;
+  width: min(340px, 100%);
+}
+
+.projects-search-icon {
+  width: 16px;
+  height: 16px;
+  color: rgba(255, 255, 255, 0.55);
+  position: absolute;
+  left: 0.85rem;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.projects-search-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+  border-radius: 10px;
+  padding: 0.62rem 0.85rem 0.62rem 2.35rem;
+  font-size: 0.9rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.projects-search-input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.projects-search-input:focus {
+  outline: none;
+  border-color: rgba(100, 170, 255, 0.7);
+  box-shadow: 0 0 0 3px rgba(100, 170, 255, 0.18);
 }
 
 /* Empty state */
@@ -168,13 +216,30 @@
   gap: 0.25rem;
 }
 
+.project-card-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
 .project-card-name {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
   font-size: 1.05rem;
   font-weight: 700;
   color: #fff;
+  margin: 0;
+}
+
+.project-card-name-link {
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.project-card-name-link:hover {
+  color: #9fcdff;
+  text-decoration: underline;
 }
 
 .project-card-gh-icon {
@@ -195,6 +260,37 @@
 .project-card-url:hover {
   color: rgba(100, 170, 255, 1);
   text-decoration: underline;
+}
+
+.pin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.75);
+  padding: 0.18rem 0.58rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.pin-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.pin-btn:hover {
+  border-color: rgba(255, 206, 84, 0.6);
+  color: #ffe7a4;
+}
+
+.pin-btn--active {
+  background: rgba(255, 196, 61, 0.18);
+  border-color: rgba(255, 206, 84, 0.65);
+  color: #ffe7a4;
 }
 
 .project-card-right {
@@ -463,6 +559,15 @@
 
 /* ── Responsive ── */
 @media (max-width: 600px) {
+  .projects-title-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .projects-search-wrap {
+    width: 100%;
+  }
+
   .project-card-top { flex-direction: column; }
   .project-card-right { align-items: flex-start; }
   .more-info-label { min-width: 100px; }

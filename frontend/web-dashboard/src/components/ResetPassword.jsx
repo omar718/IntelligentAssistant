@@ -4,6 +4,8 @@ import '../styles/Auth.css'
 import { authApi } from '../api/client'
 import CodeStart from './CodeStart'
 
+const PASSWORD_RULE_ERROR = 'Password must contain at least one capital letter, 8+ characters, and a number.'
+
 function ResetPassword() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -42,20 +44,9 @@ function ResetPassword() {
       return
     }
 
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters')
-      setLoading(false)
-      return
-    }
-
-    if (!/[A-Z]/.test(password)) {
-      setError('Password must contain at least one uppercase letter')
-      setLoading(false)
-      return
-    }
-
-    if (!/\d/.test(password)) {
-      setError('Password must contain at least one digit')
+    const isPasswordStrong = password.length >= 8 && /[A-Z]/.test(password) && /\d/.test(password)
+    if (!isPasswordStrong) {
+      setError(PASSWORD_RULE_ERROR)
       setLoading(false)
       return
     }
@@ -79,7 +70,14 @@ function ResetPassword() {
       }, 2000)
     } catch (err) {
       const detail = err?.response?.data?.detail
-      setError(typeof detail === 'string' ? detail : 'Failed to reset password. Please try again.')
+      if (typeof detail === 'string') {
+        setError(detail)
+      } else if (Array.isArray(detail)) {
+        const firstMessage = detail[0]?.msg
+        setError(typeof firstMessage === 'string' ? firstMessage : 'Failed to reset password. Please try again.')
+      } else {
+        setError('Failed to reset password. Please try again.')
+      }
     } finally {
       setLoading(false)
     }

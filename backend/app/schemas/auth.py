@@ -1,6 +1,6 @@
 import re # For string validation
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 
 from pydantic import BaseModel, EmailStr, field_validator, model_validator # for validation
 
@@ -12,6 +12,7 @@ from pydantic import BaseModel, EmailStr, field_validator, model_validator # for
 PASSWORD_MIN_LENGTH = 8
 _UPPER_RE = re.compile(r"[A-Z]")
 _DIGIT_RE = re.compile(r"\d")
+RESET_PASSWORD_ERROR = "Password must contain at least one capital letter, 8+ characters, and a number."
 
 
 def validate_password_strength(v: str) -> str:
@@ -78,7 +79,9 @@ class ResetPasswordRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def password_strength(cls, v: str) -> str:
-        return validate_password_strength(v)
+        if len(v) < PASSWORD_MIN_LENGTH or not _UPPER_RE.search(v) or not _DIGIT_RE.search(v):
+            raise ValueError(RESET_PASSWORD_ERROR)
+        return v
 
     @model_validator(mode="after")
     def passwords_match(self) -> "ResetPasswordRequest":
@@ -131,6 +134,8 @@ class ProjectSummary(BaseModel):
     status: str
     created_at: datetime
     port: Optional[int] = None
+    repository_url: Optional[str] = None
+    metadata: Optional[dict[str, Any]] = None
 
     model_config = {"from_attributes": True}
 

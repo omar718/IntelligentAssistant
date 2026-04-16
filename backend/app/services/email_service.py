@@ -37,24 +37,6 @@ def send_verification_email(user_id: str, email: str) -> None:
     The link points to the frontend verify-email page.
     """
     token = create_signed_token(user_id, purpose="email_verify", ttl_hours=24)
-<<<<<<< HEAD
-    link = f"{settings.API_BASE_URL}/auth/verify/{token}"
-    import logging
-    logging.getLogger("app.services.email").info(f"VERIFICATION LINK: {link}")
-
-    html = f"""
-    <h2>Verify your email</h2>
-    <p>Click the link below to activate your Intelligent Assistant account.
-       This link expires in 24 hours.</p>
-    <p><a href="{link}" style="
-        background:#2563EB;color:#fff;padding:12px 24px;
-        border-radius:6px;text-decoration:none;font-weight:bold;">
-      Verify Email
-    </a></p>
-    <p>If you did not create an account, you can safely ignore this email.</p>
-    """
-
-=======
     app_url = _normalize_base_url(settings.APP_BASE_URL)
     link = f"{app_url}/verify-email?token={token}"
     
@@ -69,7 +51,6 @@ def send_verification_email(user_id: str, email: str) -> None:
 </body></html>"""
     
     logger.debug(f"Email HTML: {html}")
->>>>>>> e58e5f23e733c21c5d235d4d36af36a5a77cf4ed
     _send_email(email, "Verify your email — Intelligent Assistant", html)
 
 

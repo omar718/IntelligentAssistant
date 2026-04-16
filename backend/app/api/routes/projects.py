@@ -149,6 +149,110 @@ class CreateProjectRequest(BaseModel):
     source: ProjectSource
     task_id: Optional[str] = None
 
+class ValidateRepositoryRequest(BaseModel):
+    url: str
+
+class ValidateRepositoryResponse(BaseModel):
+    valid: bool
+    error: Optional[str] = None
+
+def _validate_git_repo(git_url: str) -> tuple[bool, str]:
+    """
+    Validate if a git repository is accessible using git ls-remote.
+    Returns (is_valid, error_message)
+    """
+    if not git_url or not git_url.strip():
+        return False, "Repository URL cannot be empty"
+    
+    git_url = git_url.strip()
+    
+    # Ensure HTTPS URL has proper format
+    if git_url.startswith('git@'):
+        # SSH URLs: git@github.com:user/repo.git
+        pass
+    elif not git_url.startswith('http://') and not git_url.startswith('https://'):
+        # If URL doesn't end with http:// or https://, assume https://
+        git_url = f"https://{git_url}"
+    
+    # Ensure .git suffix for proper git ls-remote validation
+    if not git_url.endswith('.git'):
+        git_url_with_git = f"{git_url}.git"
+    else:
+        git_url_with_git = git_url
+    
+    env = os.environ.copy()
+    # Disable SSL verification for self-signed certificates (can add config option later)
+    env['GIT_SSL_NO_VERIFY'] = '1'
+    
+    try:
+        # Try with .git suffix first
+        logger.debug(f"[Validate] Attempting git ls-remote with .git suffix: {git_url_with_git}")
+        result = subprocess.run(
+            ['git', 'ls-remote', '--heads', git_url_with_git],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=env
+        )
+        
+        if result.returncode == 0:
+            logger.info(f"[Validate] Repository valid: {git_url}")
+            return True, ""
+        
+        # If .git suffix failed and URL doesn't already have it, try without .git
+        if git_url_with_git.endswith('.git') and not git_url.endswith('.git'):
+            logger.debug(f"[Validate] Retrying without .git suffix: {git_url}")
+            result = subprocess.run(
+                ['git', 'ls-remote', '--heads', git_url],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=env
+            )
+            if result.returncode == 0:
+                logger.info(f"[Validate] Repository valid (without .git): {git_url}")
+                return True, ""
+        
+        # Provide more detailed error messages
+        error_output = result.stderr.strip() if result.stderr else result.stdout.strip()
+        
+        if result.returncode == 128:
+            return False, f"Repository not found or not accessible: {git_url}"
+        elif result.returncode == 1:
+            # Often means authentication required or repo doesn't exist
+            if 'not found' in error_output.lower() or 'does not exist' in error_output.lower():
+                return False, f"Repository not found: {git_url}"
+            return False, f"Failed to access repository. Please verify the URL is correct and the repo is public or you have access."
+        elif result.returncode in [2, 127]:
+            return False, "Git command not available or malformed URL"
+        else:
+            return False, f"Repository validation failed: {error_output if error_output else f'exit code {result.returncode}'}"
+    
+    except subprocess.TimeoutExpired:
+        return False, "Repository validation timed out (>10s). The repository might be unavailable."
+    except FileNotFoundError:
+        return False, "Git is not installed on the server. Contact administrator."
+    except Exception as e:
+        logger.error(f"[Validate] Unexpected error validating {git_url}: {str(e)}")
+        return False, f"Validation error: {str(e)}"
+
+@router.post("/api/projects/validate", response_model=ValidateRepositoryResponse)
+async def validate_repository(req: ValidateRepositoryRequest, current_user: CurrentUser):
+    """Quick validation that a git repo exists without cloning it."""
+    if not req.url:
+        return ValidateRepositoryResponse(valid=False, error="Repository URL is required")
+    
+    logger.info("[Validate] Checking repository: %s", req.url)
+    loop = asyncio.get_event_loop()
+    is_valid, error_msg = await loop.run_in_executor(None, _validate_git_repo, req.url)
+    
+    if is_valid:
+        logger.info("[Validate] Repository is valid: %s", req.url)
+        return ValidateRepositoryResponse(valid=True)
+    else:
+        logger.warning("[Validate] Repository validation failed: %s - %s", req.url, error_msg)
+        return ValidateRepositoryResponse(valid=False, error=error_msg)
+
 @router.post("/api/projects")
 async def create_project(
     req: CreateProjectRequest,
@@ -190,7 +294,12 @@ async def create_project(
                 message="Cloning repository...",
             )
             loop = asyncio.get_event_loop()
-            project_path = await loop.run_in_executor(None, _clone_repo, req.source.url, target_base, task_id, loop)
+            try:
+                project_path = await loop.run_in_executor(None, _clone_repo, req.source.url, target_base, task_id, loop)
+            except subprocess.CalledProcessError as e:
+                if e.returncode == 128:
+                    raise HTTPException(status_code=400, detail=f"The following repo {req.source.url} is not found! Make sure that is existing.")
+                raise HTTPException(status_code=500, detail=f"Git clone failed: {str(e)}")
 
         elif req.source.type == "local":
             if not req.source.path:
@@ -257,6 +366,8 @@ async def create_project(
                 "path": str(project_path),
                 "status": ProjectStatus.queued,
                 "metadata_": {
+                    "source_type": req.source.type,
+                    "source_url": req.source.url,
                     "detected_pm": info.primary_pm,
                     "steps": info.steps,
                     "env_vars": info.env_vars,
@@ -521,4 +632,3 @@ def _clone_repo(git_url: str, base_dir: Path, task_id: Optional[str], loop: asyn
     else:
         _run_git_with_progress(['git', 'clone', '--progress', git_url, str(target)], task_id, 10, 60, 'Cloning repository...', loop)
     return target
-```

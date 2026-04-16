@@ -88,6 +88,25 @@ def _as_utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def _extract_repository_url(metadata: dict | None) -> Optional[str]:
+    if not isinstance(metadata, dict):
+        return None
+
+    # Backward-compatible key lookup for old and new metadata formats.
+    for key in ("source_url", "repository_url", "git_url", "url"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    source = metadata.get("source")
+    if isinstance(source, dict):
+        value = source.get("url")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # POST /auth/register
 # ---------------------------------------------------------------------------
@@ -347,7 +366,19 @@ async def get_my_projects(
 
     from app.schemas.auth import ProjectSummary
     return PaginatedProjects(
-        items=[ProjectSummary.model_validate(p) for p in projects],
+        items=[
+            ProjectSummary.model_validate({
+                "id": p.id,
+                "name": p.name,
+                "type": p.type,
+                "status": p.status,
+                "created_at": p.created_at,
+                "port": p.port,
+                "repository_url": _extract_repository_url(p.metadata_),
+                "metadata": p.metadata_ or {},
+            })
+            for p in projects
+        ],
         total=total,
         page=page,
         per_page=per_page,

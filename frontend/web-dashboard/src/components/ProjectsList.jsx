@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { jsPDF } from 'jspdf'
 import { userApi } from '../api/client'
 import TechBadge from './TechBadge'
 import '../styles/ProjectsList.css'
+
+const PINNED_PROJECTS_STORAGE_KEY = 'pinned_project_ids'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function parseBackendDate(value) {
@@ -22,6 +24,50 @@ function formatDate(iso) {
   return date.toLocaleDateString('en-US', {
     year: 'numeric', month: 'short', day: 'numeric',
   })
+}
+
+function normalizeRepositoryUrl(raw) {
+  if (typeof raw !== 'string') return null
+  const value = raw.trim()
+  if (!value) return null
+
+  // Convert SSH-style GitHub URL to a browser-openable https URL.
+  const sshMatch = value.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i)
+  if (sshMatch) {
+    return `https://github.com/${sshMatch[1]}/${sshMatch[2]}`
+  }
+
+  if (/^https?:\/\//i.test(value)) {
+    return value
+  }
+
+  if (/^github\.com\//i.test(value)) {
+    return `https://${value}`
+  }
+
+  return null
+}
+
+function resolveRepositoryUrl(project) {
+  const metadata = project?.metadata && typeof project.metadata === 'object' ? project.metadata : {}
+  const candidates = [
+    project?.repository_url,
+    project?.source_url,
+    project?.git_url,
+    project?.url,
+    metadata?.source_url,
+    metadata?.repository_url,
+    metadata?.git_url,
+    metadata?.url,
+    metadata?.source?.url,
+  ]
+
+  for (const candidate of candidates) {
+    const normalized = normalizeRepositoryUrl(candidate)
+    if (normalized) return normalized
+  }
+
+  return null
 }
 
 function handleDownload(project) {
@@ -64,20 +110,55 @@ function handleDownload(project) {
 }
 
 // ── Project card ───────────────────────────────────────────────────────────────
-function ProjectCard({ project, onDeleteRequest }) {
+function ProjectCard({ project, onDeleteRequest, isPinned, onTogglePin }) {
   const [open, setOpen] = useState(false)
+  const repositoryUrl = resolveRepositoryUrl(project)
 
   return (
     <div className={`project-card ${open ? 'project-card--open' : ''}`}>
       {/* ── Top row ── */}
       <div className="project-card-top">
         <div className="project-card-left">
-          <div className="project-card-name">
+          <div className="project-card-name-row">
             <svg viewBox="0 0 24 24" fill="currentColor" className="project-card-gh-icon">
               <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.21 11.39.6.11.79-.26.79-.58v-2.23c-3.34.73-4.03-1.42-4.03-1.42-.55-1.39-1.33-1.76-1.33-1.76-1.09-.74.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.49 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 016.01 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.24 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.19.7.8.58C20.57 21.8 24 17.3 24 12c0-6.63-5.37-12-12-12z"/>
             </svg>
-            <span>{project.name}</span>
+            {repositoryUrl ? (
+              <a
+                className="project-card-name project-card-name-link"
+                href={repositoryUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open GitHub repository"
+              >
+                {project.name}
+              </a>
+            ) : (
+              <span className="project-card-name" title="Repository URL unavailable for this project">
+                {project.name}
+              </span>
+            )}
+            <button
+              className={`pin-btn ${isPinned ? 'pin-btn--active' : ''}`}
+              onClick={() => onTogglePin(project.id)}
+              title={isPinned ? 'Unpin project' : 'Pin project'}
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M16 9V4l1-1V2H7v1l1 1v5l-2 2v1h5v8h2v-8h5v-1z"/>
+              </svg>
+              {isPinned ? 'Pinned' : 'Pin'}
+            </button>
           </div>
+          {repositoryUrl && (
+            <a
+              className="project-card-url"
+              href={repositoryUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {repositoryUrl}
+            </a>
+          )}
         </div>
 
         <div className="project-card-right">
@@ -181,6 +262,16 @@ function DeleteConfirmModal({ project, onCancel, onConfirm }) {
 // ── Page ───────────────────────────────────────────────────────────────────────
 function ProjectsList({ onBack }) {
   const [projects, setProjects] = useState([])
+  const [searchTerm, setSearchTerm] = useState('')
+  const [pinnedProjectIds, setPinnedProjectIds] = useState(() => {
+    try {
+      const raw = localStorage.getItem(PINNED_PROJECTS_STORAGE_KEY)
+      const parsed = raw ? JSON.parse(raw) : []
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [projectToDelete, setProjectToDelete] = useState(null)
@@ -193,6 +284,38 @@ function ProjectsList({ onBack }) {
       .finally(() => setLoading(false))
   }, [])
 
+  useEffect(() => {
+    localStorage.setItem(PINNED_PROJECTS_STORAGE_KEY, JSON.stringify(pinnedProjectIds))
+  }, [pinnedProjectIds])
+
+  const visibleProjects = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase()
+    const filtered = term
+      ? projects.filter((project) => project.name.toLowerCase().includes(term))
+      : projects
+
+    return [...filtered].sort((a, b) => {
+      const aPinned = pinnedProjectIds.includes(a.id)
+      const bPinned = pinnedProjectIds.includes(b.id)
+
+      if (aPinned !== bPinned) {
+        return aPinned ? -1 : 1
+      }
+
+      const aDate = parseBackendDate(a.created_at)?.getTime() ?? 0
+      const bDate = parseBackendDate(b.created_at)?.getTime() ?? 0
+      return bDate - aDate
+    })
+  }, [projects, searchTerm, pinnedProjectIds])
+
+  const handleTogglePin = (projectId) => {
+    setPinnedProjectIds((prev) => (
+      prev.includes(projectId)
+        ? prev.filter((id) => id !== projectId)
+        : [...prev, projectId]
+    ))
+  }
+
   const handleDeleteRequest = (project) => {
     setProjectToDelete(project)
   }
@@ -201,6 +324,7 @@ function ProjectsList({ onBack }) {
     // Remove from UI immediately
     // TODO: call delete API endpoint once backend adds it
     setProjects(prev => prev.filter(p => p.id !== id))
+    setPinnedProjectIds(prev => prev.filter(pinnedId => pinnedId !== id))
     setProjectToDelete(null)
   }
 
@@ -236,8 +360,23 @@ function ProjectsList({ onBack }) {
 
       <main className="projects-main">
         <div className="projects-title-row">
-          <h1 className="projects-title">Projects</h1>
-          {!loading && <span className="projects-count">{projects.length} project{projects.length !== 1 ? 's' : ''}</span>}
+          <div className="projects-title-block">
+            <h1 className="projects-title">Projects History</h1>
+            {!loading && <span className="projects-count">{visibleProjects.length} project{visibleProjects.length !== 1 ? 's' : ''}</span>}
+          </div>
+          <div className="projects-search-wrap">
+            <svg viewBox="0 0 24 24" fill="none" className="projects-search-icon">
+              <path d="M11 19a8 8 0 100-16 8 8 0 000 16z" stroke="currentColor" strokeWidth="1.8"/>
+              <path d="M21 21l-4.2-4.2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+            </svg>
+            <input
+              type="text"
+              className="projects-search-input"
+              placeholder="Search projects..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
         </div>
         <p className="projects-subtitle">
           {loading
@@ -274,11 +413,23 @@ function ProjectsList({ onBack }) {
           </div>
         )}
 
+        {!loading && !error && projects.length > 0 && visibleProjects.length === 0 && (
+          <div className="projects-empty">
+            <p className="empty-label">No project matches "{searchTerm}"</p>
+          </div>
+        )}
+
         {/* Projects list */}
-        {!loading && !error && projects.length > 0 && (
+        {!loading && !error && visibleProjects.length > 0 && (
           <div className="projects-list">
-            {projects.map(p => (
-              <ProjectCard key={p.id} project={p} onDeleteRequest={handleDeleteRequest} />
+            {visibleProjects.map(p => (
+              <ProjectCard
+                key={p.id}
+                project={p}
+                onDeleteRequest={handleDeleteRequest}
+                isPinned={pinnedProjectIds.includes(p.id)}
+                onTogglePin={handleTogglePin}
+              />
             ))}
           </div>
         )}

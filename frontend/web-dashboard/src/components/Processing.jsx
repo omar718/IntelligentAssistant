@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { projectsApi } from '../api/client'
 import '../styles/Processing.css'
 
-function Processing({ gitUrl, cloneDir, onBack }) {
+function Processing({ gitUrl, cloneDir, onBack, onError }) {
   const [completed, setCompleted] = useState(false)
   const [error, setError] = useState(null)
   const [isCancelling, setIsCancelling] = useState(false)
@@ -164,6 +164,19 @@ function Processing({ gitUrl, cloneDir, onBack }) {
             finished = true
             if (pollInterval) clearInterval(pollInterval)
             setError('Session expired. Please sign in again and relaunch the project.')
+            return
+          }
+
+          // Check for repo-not-found error ("is not found!")
+          if (detail && detail.includes('is not found!')) {
+            console.log('[Processing] Detected repo-not-found error, routing back to CodeStart')
+            finished = true
+            if (pollInterval) clearInterval(pollInterval)
+            if (onError) {
+              // Call onError to route back to CodeStart with error message
+              onError(detail)
+              onBack()
+            }
             return
           }
           

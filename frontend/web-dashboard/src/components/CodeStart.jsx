@@ -28,7 +28,7 @@ function InfoOverlay({ title, message, primaryLabel, onPrimary, linkLabel, onLin
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
-function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
+function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout, projectError, onClearProjectError }) {
   const location = useLocation()
   const routerNavigate = useNavigate()
   const [gitUrl, setGitUrl] = useState('')
@@ -90,9 +90,34 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
     if (!gitUrl.trim()) return
     setError('')
     setPicking(true)
-    console.log('[CodeStart] Starting folder picker...', { gitUrl })
+    console.log('[CodeStart] Validating repository...', { gitUrl })
+    
     try {
-      console.log('[CodeStart] Fetching /pick-folder from http://localhost:6009')
+      // Step 1: Validate repository with backend before opening folder picker
+      console.log('[CodeStart] Calling /api/projects/validate...')
+      const token = localStorage.getItem('access_token')
+      const validateRes = await fetch('/api/projects/validate', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` })
+        },
+        body: JSON.stringify({ url: gitUrl })
+      })
+      
+      const validateData = await validateRes.json()
+      console.log('[CodeStart] Validation response:', validateData)
+      
+      if (!validateData.valid) {
+        // Repository is invalid - show error immediately without folder picker
+        console.log('[CodeStart] Repository validation failed:', validateData.error)
+        setPicking(false)
+        setError(validateData.error || 'Repository validation failed, Please enter an existing GitHub repository URL.')
+        return
+      }
+      
+      // Step 2: Validation passed, now open folder picker
+      console.log('[CodeStart] Repository is valid, opening folder picker...', { gitUrl })
       const res = await fetch('http://localhost:6009/pick-folder')
       console.log('[CodeStart] Folder picker response status:', res.status)
       
@@ -112,7 +137,7 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
     } catch (err) {
       console.error('[CodeStart] Error in handleAnalyze:', err)
       setPicking(false)
-      setError('Could not open folder picker — make sure the VS Code extension is running (press F5 in VS Code), then try again.')
+      setError('Could not validate repository — please try again.')
     }
   }
 
@@ -300,15 +325,32 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
                 </svg>
               </button>
             </div>
-            <div className="git-input-wrapper">
-              <input
-                type="text"
-                className="git-input"
-                placeholder="https://github.com/username/repo.git"
-                value={gitUrl}
-                onChange={(e) => { setGitUrl(e.target.value); setError('') }}
-                onKeyPress={(e) => e.key === 'Enter' && handleLaunch()}
-              />
+            <div className="git-section-inner">
+              {projectError && (
+                <div className="project-error-message">
+                  <p>{projectError}</p>
+                  <button 
+                    className="project-error-close"
+                    onClick={() => {
+                      onClearProjectError()
+                      setGitUrl('')
+                    }}
+                    title="Dismiss and clear"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+              <div className="git-input-wrapper">
+                <input
+                  type="text"
+                  className="git-input"
+                  placeholder="https://github.com/username/repo.git"
+                  value={gitUrl}
+                  onChange={(e) => { setGitUrl(e.target.value); setError('') }}
+                  onKeyPress={(e) => e.key === 'Enter' && handleLaunch()}
+                />
+              </div>
             </div>
             {error && <p className="error-message">{error}</p>}
             <button className="analyze-button" onClick={handleLaunch} disabled={picking}>

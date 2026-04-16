@@ -26,11 +26,13 @@ function MainApp({ user, onLogin, onLogout }) {
   const [gitUrl, setGitUrl] = useState('')
   const [cloneDir, setCloneDir] = useState('')
   const [showVSCodeModal, setShowVSCodeModal] = useState(false)
+  const [projectError, setProjectError] = useState(null)
 
   const handleAnalyze = (url, dir) => {
     console.log('[App] handleAnalyze called with:', { url, dir })
     setGitUrl(url)
     setCloneDir(dir || '')
+    setProjectError(null) // Clear any previous error
     console.log('[App] State updated, navigating to processing page')
     setCurrentPage('processing')
   }
@@ -39,6 +41,13 @@ function MainApp({ user, onLogin, onLogout }) {
     setCurrentPage('home')
     setGitUrl('')
     setCloneDir('')
+    setProjectError(null)
+  }
+
+  const handleProcessingError = (error) => {
+    console.log('[App] Repo-not-found error, returning to home with error:', error)
+    setProjectError(error)
+    setCurrentPage('home')
   }
 
   return (
@@ -50,6 +59,8 @@ function MainApp({ user, onLogin, onLogout }) {
           user={user}
           onLogin={onLogin}
           onLogout={onLogout}
+          projectError={projectError}
+          onClearProjectError={() => setProjectError(null)}
         />
       )}
       {currentPage === 'processing' && (
@@ -58,6 +69,7 @@ function MainApp({ user, onLogin, onLogout }) {
           cloneDir={cloneDir}
           onBack={handleBack}
           onVSCodeNotFound={() => setShowVSCodeModal(true)}
+          onError={handleProcessingError}
         />
       )}
       {currentPage === 'projects' && (

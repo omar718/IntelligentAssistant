@@ -1,15 +1,9 @@
 import { useState, useEffect } from 'react'
-import { userApi, healthApi } from '../api/client'
+import { userApi, healthApi, adminApi } from '../api/client'
+import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import TechBadge from './TechBadge'
+import Toast from './Toast'
 import '../styles/Admin.css'
-
-// ── Mock users — replace with real API once backend adds the endpoints ─────────
-const MOCK_USERS = [
-  { id: 'user_1', name: 'Aziz Hadj', email: 'hadjhassenmohamedaziz8@gmail.com', role: 'admin',  is_active: true,  created_at: '2026-03-16T00:59:36Z' },
-  { id: 'user_2', name: 'John Doe',  email: 'john@example.com',                  role: 'user',   is_active: true,  created_at: '2026-03-10T10:00:00Z' },
-  { id: 'user_3', name: 'Jane Smith',email: 'jane@example.com',                  role: 'user',   is_active: false, created_at: '2026-03-08T08:30:00Z' },
-  { id: 'user_4', name: 'Test User', email: 'user@example.com',                  role: 'user',   is_active: true,  created_at: '2026-03-01T12:00:00Z' },
-]
 
 function formatDate(value) {
   if (!value) return '—'
@@ -55,6 +49,205 @@ function StatCard({ label, value, icon, accent }) {
   )
 }
 
+// ── DAU Chart ──────────────────────────────────────────────────────────────
+function DauChart({ data, selectedDate, onDateClick }) {
+  const handleClick = (dataPoint) => {
+    onDateClick(dataPoint.date)
+  }
+
+  // Custom dot component for highlighting selected date
+  const CustomDot = (props) => {
+    const { cx, cy, payload } = props
+    const isSelected = selectedDate === payload.date
+    const radius = isSelected ? 7 : 5
+    const fill = isSelected ? '#22c55e' : '#4ade80'
+
+    return (
+      <circle
+        cx={cx}
+        cy={cy}
+        r={radius}
+        fill={fill}
+        opacity={0.8}
+        cursor="pointer"
+        onClick={() => onDateClick(payload.date)}
+      />
+    )
+  }
+
+  return (
+    <div className="admin-dau-chart-container">
+      <h3 className="admin-chart-title">Daily Active Users</h3>
+      {data && data.length > 0 ? (
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={data} margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#444" />
+            <XAxis 
+              dataKey="date" 
+              stroke="#999"
+              tick={{ fontSize: 12 }}
+            />
+            <YAxis 
+              stroke="#999"
+              tick={{ fontSize: 12 }}
+            />
+            <Tooltip 
+              contentStyle={{
+                backgroundColor: '#1a1a1a',
+                border: '1px solid #444',
+                borderRadius: '6px',
+                color: '#fff'
+              }}
+              formatter={(value) => [value, 'Active Users']}
+            />
+            <Legend wrapperStyle={{ color: '#999' }} />
+            <Line 
+              type="monotone" 
+              dataKey="active_users" 
+              stroke="#4ade80" 
+              strokeWidth={2}
+              dot={<CustomDot />}
+              activeDot={{ r: 8 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      ) : (
+        <p className="admin-loading" style={{ padding: '2rem', textAlign: 'center' }}>
+          No DAU data available
+        </p>
+      )}
+      {selectedDate && (
+        <div className="admin-chart-filter-info">
+          <p>
+            Selected date: <strong>{selectedDate}</strong>
+            <button
+              className="admin-chart-clear-btn"
+              onClick={() => onDateClick(null)}
+              title="Clear filter"
+            >
+              ✕
+            </button>
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Stack Distribution Chart ───────────────────────────────────────────────────
+function StackDistributionChart({ data }) {
+  // Process data: top 6 stacks + "Other" for rest
+  const COLORS = ['#4ade80', '#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#6b7280']
+  
+  if (!data || data.length === 0) {
+    return (
+      <div style={{ 
+        background: 'rgba(255, 255, 255, 0.03)',
+        border: '1px solid rgba(255, 255, 255, 0.07)',
+        borderRadius: '12px',
+        padding: '1.5rem',
+        margin: '1rem 0',
+        textAlign: 'center'
+      }}>
+        <h3 style={{ color: '#e8e8f0', marginBottom: '1rem', fontSize: '1.1rem', fontWeight: 600 }}>
+          Stack Distribution
+        </h3>
+        <p style={{ color: '#999', padding: '2rem' }}>No stack data available</p>
+      </div>
+    )
+  }
+
+  // Take top 6, group rest as "Other"
+  const top6 = data.slice(0, 6)
+  const rest = data.slice(6)
+  const otherCount = rest.reduce((sum, item) => sum + item.count, 0)
+  const otherPercentage = rest.reduce((sum, item) => sum + item.percentage, 0)
+  
+  const chartData = [
+    ...top6,
+    ...(otherCount > 0 ? [{ stack: 'Other', count: otherCount, percentage: otherPercentage }] : [])
+  ]
+
+  const CustomTooltip = ({ active, payload }) => {
+    if (!active || !payload || payload.length === 0) return null
+    const data = payload[0].payload
+    return (
+      <div style={{
+        background: '#1a1a1a',
+        border: '1px solid #4ade80',
+        borderRadius: '6px',
+        padding: '0.5rem 1rem',
+        color: '#fff'
+      }}>
+        <p style={{ margin: 0, fontWeight: 600 }}>{data.stack}</p>
+        <p style={{ margin: '0.25rem 0', color: '#4ade80', fontSize: '0.9rem' }}>
+          {data.count} items · {data.percentage.toFixed(1)}%
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ 
+      background: 'rgba(255, 255, 255, 0.03)',
+      border: '1px solid rgba(255, 255, 255, 0.07)',
+      borderRadius: '12px',
+      padding: '1rem',
+      height: '100%',
+      display: 'flex',
+      flexDirection: 'column'
+    }}>
+      <h3 style={{ color: '#e8e8f0', marginBottom: '0.75rem', fontSize: '1rem', fontWeight: 600 }}>
+        Stack Distribution
+      </h3>
+      
+      <ResponsiveContainer width="100%" height={250}>
+        <PieChart>
+          <Pie
+            data={chartData}
+            cx="50%"
+            cy="45%"
+            innerRadius={60}
+            outerRadius={90}
+            paddingAngle={2}
+            dataKey="count"
+            label={({ stack, percentage }) => `${stack}`}
+          >
+            {chartData.map((entry, index) => (
+              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+            ))}
+          </Pie>
+          <Tooltip content={<CustomTooltip />} />
+        </PieChart>
+      </ResponsiveContainer>
+
+      <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1, overflowY: 'auto' }}>
+        {chartData.map((item, idx) => (
+          <div key={item.stack} style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            padding: '0.375rem',
+            background: 'rgba(255, 255, 255, 0.02)',
+            borderRadius: '4px',
+            fontSize: '0.8rem'
+          }}>
+            <div style={{
+              width: '10px',
+              height: '10px',
+              borderRadius: '2px',
+              background: COLORS[idx % COLORS.length]
+            }} />
+            <span style={{ color: '#e8e8f0' }}>
+              {item.stack}: <strong style={{ color: '#4ade80' }}>{item.count}</strong> ({item.percentage.toFixed(1)}%)
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Health indicator ───────────────────────────────────────────────────────────
 function HealthStatus({ health, loading }) {
   if (loading) return <div className="admin-health-badge loading">Checking...</div>
@@ -64,6 +257,8 @@ function HealthStatus({ health, loading }) {
 
 // ── Delete confirm modal ───────────────────────────────────────────────────────
 function DeleteUserModal({ user, onCancel, onConfirm }) {
+  const [reason, setReason] = useState('')
+
   return (
     <div className="delete-modal-overlay" onClick={onCancel}>
       <div className="delete-modal-card" onClick={(e) => e.stopPropagation()}>
@@ -77,9 +272,83 @@ function DeleteUserModal({ user, onCancel, onConfirm }) {
           Are you sure you want to delete <strong>{user.name}</strong>?<br/>
           This action cannot be undone.
         </p>
+        
+        <div className="delete-modal-reason-section">
+          <label className="delete-modal-reason-label">
+            Reason for deletion <span className="delete-modal-required">*</span>
+          </label>
+          <textarea
+            className="delete-modal-reason-input"
+            placeholder="Enter reason for deleting this user..."
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows="3"
+          />
+        </div>
+
         <div className="delete-modal-actions">
           <button className="delete-modal-btn cancel" onClick={onCancel}>Cancel</button>
-          <button className="delete-modal-btn confirm" onClick={() => onConfirm(user.id)}>Delete</button>
+          <button 
+            className="delete-modal-btn confirm" 
+            onClick={() => onConfirm(user.id, reason)}
+            disabled={!reason.trim()}
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Toggle user status modal ───────────────────────────────────────────────────
+function ToggleUserStatusModal({ user, onCancel, onConfirm }) {
+  const [reason, setReason] = useState('')
+  const isActivating = !user.is_active
+  return (
+    <div className="delete-modal-overlay" onClick={onCancel}>
+      <div className="delete-modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className={`delete-modal-icon ${isActivating ? 'activate' : 'deactivate'}`}>
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            {isActivating ? (
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/>
+            ) : (
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z"/>
+            )}
+          </svg>
+        </div>
+        <h2 className="delete-modal-title">
+          {isActivating ? 'Activate user?' : 'Deactivate user?'}
+        </h2>
+        <p className="delete-modal-message">
+          Are you sure you want to <strong>{isActivating ? 'activate' : 'deactivate'}</strong> <strong>{user.name}</strong>?<br/>
+          {isActivating ? 'They will be able to access their account.' : 'They will not be able to access their account.'}
+        </p>
+
+        {!isActivating && (
+          <div className="delete-modal-reason-section">
+            <label className="delete-modal-reason-label">
+              Reason for deactivation <span className="delete-modal-required">*</span>
+            </label>
+            <textarea
+              className="delete-modal-reason-input"
+              placeholder="Enter reason for deactivating this user..."
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows="3"
+            />
+          </div>
+        )}
+
+        <div className="delete-modal-actions">
+          <button className="delete-modal-btn cancel" onClick={onCancel}>Cancel</button>
+          <button 
+            className={`delete-modal-btn confirm ${isActivating ? 'activate' : 'deactivate'}`} 
+            onClick={() => onConfirm(user.id, reason)}
+            disabled={!isActivating && !reason.trim()}
+          >
+            {isActivating ? 'Activate' : 'Deactivate'}
+          </button>
         </div>
       </div>
     </div>
@@ -91,53 +360,272 @@ function AdminPanel({ onBack }) {
   const [projects, setProjects]   = useState([])
   const [stats, setStats]         = useState(null)
   const [health, setHealth]       = useState(null)
-  const [users, setUsers]         = useState(MOCK_USERS)
+  const [users, setUsers]         = useState([])
+  const [analytics, setAnalytics] = useState(null)
+  const [selectedDauDate, setSelectedDauDate] = useState(null)
   const [activeTab, setActiveTab] = useState('overview')
   const [userToDelete, setUserToDelete] = useState(null)
+  const [userToToggleStatus, setUserToToggleStatus] = useState(null)
+  const [emailSearch, setEmailSearch] = useState('')
+  const [roleFilter, setRoleFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [filteredUsers, setFilteredUsers] = useState([])
+  const [currentPage, setCurrentPage] = useState(1)
+
+  const USERS_PER_PAGE = 10
 
   const [loadingProjects, setLoadingProjects] = useState(true)
   const [loadingStats, setLoadingStats]       = useState(true)
   const [loadingHealth, setLoadingHealth]     = useState(true)
+  const [loadingUsers, setLoadingUsers] = useState(true)
+  const [loadingAnalytics, setLoadingAnalytics] = useState(true)
+  const [toast, setToast]                     = useState({ message: '', type: '' })
+
+  // ── Toast helper ─────────────────────────────────────────────────────────
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type })
+  }
+
+  // ── Fetch projects from API ─────────────────────────────────────────────────────
+  const fetchProjects = () => {
+    setLoadingProjects(true)
+    console.log('[AdminPanel] Fetching projects from API...')
+    adminApi.listProjects()
+      .then(data => {
+        console.log('[AdminPanel] ============ PROJECTS API RESPONSE ============')
+        console.log('[AdminPanel] Full response:', JSON.stringify(data, null, 2))
+        console.log('[AdminPanel] Response type:', typeof data)
+        console.log('[AdminPanel] Response.items type:', Array.isArray(data?.items) ? 'ARRAY' : typeof data?.items)
+        
+        const projectList = data.items || []
+        console.log('[AdminPanel] Total projects to display:', projectList.length)
+        if (projectList.length > 0) {
+          console.log('[AdminPanel] First project:', projectList[0])
+          projectList.forEach((p, idx) => {
+            console.log(`  ${idx + 1}. ${p.name} (${p.type}) - Status: ${p.status}, Created: ${p.created_at}`)
+          })
+        }
+        
+        setProjects(projectList)
+      })
+      .catch((err) => {
+        console.error('[AdminPanel] ============ PROJECTS API ERROR ============')
+        console.error('[AdminPanel] Failed to fetch projects:', {
+          status: err?.response?.status,
+          data: err?.response?.data,
+          message: err?.message
+        })
+        showToast('Failed to load projects', 'error')
+        setProjects([])
+      })
+      .finally(() => setLoadingProjects(false))
+  }
+
+  // ── Fetch users from API ─────────────────────────────────────────────────────
+  const fetchUsers = () => {
+    setLoadingUsers(true)
+    console.log('[AdminPanel] Fetching users from API with NO filters...')
+    adminApi.listUsers()
+      .then(data => {
+        console.log('[AdminPanel] ============ RAW API RESPONSE ============')
+        console.log('[AdminPanel] Full response:', JSON.stringify(data, null, 2))
+        console.log('[AdminPanel] Response type:', Array.isArray(data) ? 'ARRAY' : typeof data)
+        
+        // Handle both array and object with items property
+        const userList = Array.isArray(data) ? data : (data?.items || [])
+        console.log('[AdminPanel] ============ PARSED USER LIST ============')
+        console.log('[AdminPanel] Total users returned:', userList.length)
+        
+        if (userList.length > 0) {
+          console.log('[AdminPanel] First user:', userList[0])
+          console.log('[AdminPanel] User fields:')
+          Object.keys(userList[0]).forEach(key => {
+            console.log(`  - ${key}: ${JSON.stringify(userList[0][key])}`)
+          })
+          
+          // Show breakdown by verification status
+          const verified = userList.filter(u => u.is_verified).length
+          const unverified = userList.filter(u => !u.is_verified).length
+          const active = userList.filter(u => u.is_active).length
+          const inactive = userList.filter(u => !u.is_active).length
+          
+          console.log('[AdminPanel] ============ USER BREAKDOWN ============')
+          console.log(`[AdminPanel] Verified: ${verified}, Unverified: ${unverified}`)
+          console.log(`[AdminPanel] Active: ${active}, Inactive: ${inactive}`)
+          console.log('[AdminPanel] All users:')
+          userList.forEach((u, idx) => {
+            console.log(`  ${idx + 1}. ${u.name || 'NO NAME'} (${u.email}) - Verified: ${u.is_verified}, Active: ${u.is_active}`)
+          })
+        }
+        
+        setUsers(userList)
+        setFilteredUsers(userList)
+      })
+      .catch((err) => {
+        console.error('[AdminPanel] ============ API ERROR ============')
+        console.error('[AdminPanel] Failed to fetch users:', {
+          status: err?.response?.status,
+          data: err?.response?.data,
+          message: err?.message
+        })
+        showToast('Failed to load users', 'error')
+        setUsers([])
+        setFilteredUsers([])
+      })
+      .finally(() => setLoadingUsers(false))
+  }
 
   // ── Fetch all data on mount ──────────────────────────────────────────────────
   useEffect(() => {
-    userApi.getMyProjects()
-      .then(data => setProjects(data.items || []))
-      .catch(() => setProjects([]))
-      .finally(() => setLoadingProjects(false))
+    // Fetch projects
+    fetchProjects()
 
+    // Fetch current user stats
+    console.log('[AdminPanel] Fetching user stats from API...')
     userApi.getMyStats()
-      .then(data => setStats(data))
-      .catch(() => setStats(null))
+      .then(data => {
+        console.log('[AdminPanel] ============ USER STATS RESPONSE ============')
+        console.log('[AdminPanel] Stats:', JSON.stringify(data, null, 2))
+        setStats(data)
+      })
+      .catch((err) => {
+        console.error('[AdminPanel] Failed to fetch stats:', err?.message)
+        setStats(null)
+      })
       .finally(() => setLoadingStats(false))
 
     healthApi.check()
       .then(data => setHealth(data))
       .catch(() => setHealth(null))
       .finally(() => setLoadingHealth(false))
-  }, [])
+
+    // Fetch analytics
+    console.log('[AdminPanel] Fetching analytics from API...')
+    const today = new Date()
+    const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000)
+    const dateFrom = thirtyDaysAgo.toISOString().split('T')[0]
+    const dateTo = today.toISOString().split('T')[0]
+    
+    adminApi.getAnalytics(dateFrom, dateTo)
+      .then(data => {
+        console.log('[AdminPanel] ============ ANALYTICS RESPONSE ============')
+        console.log('[AdminPanel] Full Analytics:', JSON.stringify(data, null, 2))
+        console.log(`[AdminPanel] DAU points: ${data.dau?.length || 0}`)
+        setAnalytics(data)
+      })
+      .catch((err) => {
+        console.error('[AdminPanel] Failed to fetch analytics:', {
+          status: err?.response?.status,
+          data: err?.response?.data,
+          message: err?.message
+        })
+        setAnalytics(null)
+      })
+      .finally(() => setLoadingAnalytics(false))
+
+    // Fetch real users
+    fetchUsers()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Debounced email search ──────────────────────────────────────────────────
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      let filtered = users
+
+      // Filter by email
+      const query = emailSearch.toLowerCase().trim()
+      if (query) {
+        filtered = filtered.filter(u => u.email.toLowerCase().includes(query))
+      }
+
+      // Filter by role
+      if (roleFilter !== 'all') {
+        filtered = filtered.filter(u => u.role === roleFilter)
+      }
+
+      // Filter by status
+      if (statusFilter !== 'all') {
+        const isActive = statusFilter === 'active'
+        filtered = filtered.filter(u => u.is_active === isActive)
+      }
+
+      setFilteredUsers(filtered)
+    }, 300)
+
+    return () => clearTimeout(timer)
+  }, [emailSearch, roleFilter, statusFilter, users])
+
+  // ── Reset pagination when filters change ─────────────────────────────────────
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [emailSearch, roleFilter, statusFilter])
+
+  // ── Calculate pagination ─────────────────────────────────────────────────────
+  const totalPages = Math.ceil(filteredUsers.length / USERS_PER_PAGE)
+  const startIndex = (currentPage - 1) * USERS_PER_PAGE
+  const endIndex = startIndex + USERS_PER_PAGE
+  const usersOnCurrentPage = filteredUsers.slice(startIndex, endIndex)
 
   // ── User actions ─────────────────────────────────────────────────────────────
 
-  // Toggle active/inactive
-  const handleToggleActive = (id) => {
-    // TODO: call API once backend adds PATCH /api/admin/users/{id}
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, is_active: !u.is_active } : u))
+  // Toggle active/inactive (show confirmation modal)
+  const handleToggleActive = (user) => {
+    setUserToToggleStatus(user)
   }
 
-  // Toggle role between admin and user
-  const handleToggleRole = (id) => {
-    // TODO: call API once backend adds PATCH /api/admin/users/{id}
-    setUsers(prev => prev.map(u =>
-      u.id === id ? { ...u, role: u.role === 'admin' ? 'user' : 'admin' } : u
-    ))
+  // Confirm toggle active/inactive
+  const handleToggleStatusConfirm = async (id, reason) => {
+    try {
+      const user = users.find(u => u.id === id)
+      if (!user) {
+        showToast('User not found', 'error')
+        return
+      }
+      
+      const isActivating = !user.is_active
+      const userName = user.name // Store name before state changes
+      
+      await adminApi.patchUser(id, { 
+        is_active: isActivating,
+        reason 
+      })
+      
+      // Refresh the list after successful update
+      await fetchUsers()
+      
+      showToast(
+        `User ${userName} ${isActivating ? 'activated' : 'deactivated'} successfully`,
+        'success'
+      )
+    } catch (err) {
+      console.error('Toggle status error:', err)
+      showToast('Failed to update user status', 'error')
+    } finally {
+      setUserToToggleStatus(null)
+    }
   }
 
   // Delete user
-  const handleDeleteConfirm = (id) => {
-    // TODO: call API once backend adds DELETE /api/admin/users/{id}
-    setUsers(prev => prev.filter(u => u.id !== id))
-    setUserToDelete(null)
+  const handleDeleteConfirm = async (id, reason) => {
+    try {
+      const user = users.find(u => u.id === id)
+      if (!user) {
+        showToast('User not found', 'error')
+        return
+      }
+      
+      const userName = user.name // Store name before deletion
+      
+      await adminApi.deleteUser(id, reason)
+      await fetchUsers()
+      
+      showToast(`User ${userName} deleted successfully`, 'success')
+    } catch (err) {
+      console.error('Delete user error:', err)
+      showToast('Failed to delete user', 'error')
+    } finally {
+      setUserToDelete(null)
+    }
   }
 
   return (
@@ -166,7 +654,7 @@ function AdminPanel({ onBack }) {
 
       {/* ── Tabs ── */}
       <div className="admin-tabs">
-        {['overview', 'projects', 'users', 'health'].map(tab => (
+        {['overview', 'projects', 'users'].map(tab => (
           <button
             key={tab}
             className={`admin-tab ${activeTab === tab ? 'active' : ''}`}
@@ -187,32 +675,136 @@ function AdminPanel({ onBack }) {
             {loadingStats ? (
               <p className="admin-loading">Loading stats...</p>
             ) : (
-              <div className="admin-stats-grid">
-                <StatCard
-                  label="Total Projects"
-                  value={stats?.total_projects ?? projects.length}
-                  accent="#4ade80"
-                  icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8v8H3zm0 10h8v8H3zM13 3h8v8h-8zm0 10h8v8h-8z"/></svg>}
-                />
-                <StatCard
-                  label="Total Users"
-                  value={users.length}
-                  accent="#60a5fa"
-                  icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>}
-                />
-                <StatCard
-                  label="Active Users"
-                  value={users.filter(u => u.is_active).length}
-                  accent="#f472b6"
-                  icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>}
-                />
-                <StatCard
-                  label="System Status"
-                  value={loadingHealth ? 'Checking...' : health ? 'Healthy' : 'Down'}
-                  accent={health ? '#4ade80' : '#f87171'}
-                  icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>}
-                />
-              </div>
+              <>
+                <div className="admin-stats-grid">
+                  <StatCard
+                    label="Total Projects"
+                    value={projects.length}
+                    accent="#4ade80"
+                    icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8v8H3zm0 10h8v8H3zM13 3h8v8h-8zm0 10h8v8h-8z"/></svg>}
+                  />
+                  <StatCard
+                    label="Total Users"
+                    value={users.length}
+                    accent="#60a5fa"
+                    icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>}
+                  />
+                  <StatCard
+                    label="Active Users"
+                    value={users.filter(u => u.is_active).length}
+                    accent="#f472b6"
+                    icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>}
+                  />
+                  <StatCard
+                    label="Avg Projects / User"
+                    value={users.length > 0 ? (users.reduce((sum, u) => sum + u.install_count, 0) / users.length).toFixed(1) : 0}
+                    accent="#fbbf24"
+                    icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>}
+                  />
+                  <StatCard
+                    label="System Status"
+                    value={loadingHealth ? 'Checking...' : health ? 'Healthy' : 'Down'}
+                    accent={health ? '#4ade80' : '#f87171'}
+                    icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>}
+                  />
+                </div>
+
+                {/* Health Section */}
+                <div style={{ marginTop: '2rem' }}>
+                  <h3 className="admin-section-title" style={{ marginBottom: '1rem' }}>System Health</h3>
+                  {loadingHealth ? (
+                    <p className="admin-loading">Checking system health...</p>
+                  ) : (
+                    <div className="admin-health-panel">
+                      <div className={`admin-health-status-card ${health ? 'online' : 'offline'}`}>
+                        <div className="admin-health-status-icon">
+                          {health ? (
+                            <svg viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                            </svg>
+                          ) : (
+                            <svg viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                            </svg>
+                          )}
+                        </div>
+                        <div>
+                          <div className="admin-health-status-title">
+                            {health ? 'All Systems Operational' : 'Backend Unreachable'}
+                          </div>
+                          <div className="admin-health-status-sub">
+                            {health ? 'Backend is running normally' : 'Could not connect to the backend server'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {health && typeof health === 'object' && (
+                        <div className="admin-health-details">
+                          {Object.entries(health).map(([key, val]) => (
+                            <div className="admin-health-row" key={key}>
+                              <span className="admin-health-key">{key}</span>
+                              <span className="admin-health-val">{String(val)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <button
+                        className="admin-refresh-btn"
+                        onClick={() => {
+                          setLoadingHealth(true)
+                          healthApi.check()
+                            .then(data => setHealth(data))
+                            .catch(() => setHealth(null))
+                            .finally(() => setLoadingHealth(false))
+                        }}
+                      >
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                        </svg>
+                        Refresh
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* DAU Chart Section */}
+                <div style={{ marginTop: '2rem' }}>
+                  <h3 className="admin-section-title" style={{ marginBottom: '1rem' }}>Last 30 Days Analytics</h3>
+                  {loadingAnalytics ? (
+                    <p className="admin-loading">Loading analytics...</p>
+                  ) : !analytics ? (
+                    <p className="admin-loading" style={{ color: '#ef4444' }}>Failed to load analytics data</p>
+                  ) : (
+                    <div style={{ display: 'flex', gap: '1.5rem' }}>
+                      {/* DAU Chart - 75% */}
+                      <div style={{ flex: '0 0 75%' }}>
+                        {analytics?.dau && analytics.dau.length > 0 ? (
+                          <DauChart 
+                            data={analytics.dau} 
+                            selectedDate={selectedDauDate}
+                            onDateClick={(date) => {
+                              console.log('[AdminPanel] DAU date clicked:', date)
+                              setSelectedDauDate(date)
+                            }}
+                          />
+                        ) : (
+                          <p className="admin-loading">No DAU data available (dau: {analytics?.dau ? `${analytics.dau.length} items` : 'undefined'})</p>
+                        )}
+                      </div>
+
+                      {/* Stack Distribution Chart - 25% */}
+                      <div style={{ flex: '0 0 25%' }}>
+                        {analytics?.stack_distribution && analytics.stack_distribution.length > 0 ? (
+                          <StackDistributionChart data={analytics.stack_distribution} />
+                        ) : (
+                          <p className="admin-loading">No stack distribution data available</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
         )}
@@ -220,9 +812,26 @@ function AdminPanel({ onBack }) {
         {/* PROJECTS TAB */}
         {activeTab === 'projects' && (
           <div className="admin-section">
-            <div className="admin-section-header">
-              <h2 className="admin-section-title">All Projects</h2>
-              <span className="admin-count">{projects.length} total</span>
+            <div className="admin-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 className="admin-section-title">All Projects</h2>
+              </div>
+              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                <span className="admin-count">{projects.length} total</span>
+                <button
+                  className="admin-refresh-btn"
+                  onClick={() => {
+                    console.log('[AdminPanel] Manual refresh triggered for projects')
+                    fetchProjects()
+                  }}
+                  title="Refresh projects list"
+                >
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                  </svg>
+                  Refresh
+                </button>
+              </div>
             </div>
             {loadingProjects ? (
               <p className="admin-loading">Loading projects...</p>
@@ -267,90 +876,172 @@ function AdminPanel({ onBack }) {
         {/* USERS TAB */}
         {activeTab === 'users' && (
           <div className="admin-section">
-            <div className="admin-section-header">
-              <h2 className="admin-section-title">All Users</h2>
-              <span className="admin-count">{users.length} total</span>
-            </div>
-            <div className="admin-projects-table">
-              <div className="admin-table-header admin-users-header">
-                <span>User</span>
-                <span>Role</span>
-                <span>Status</span>
-                <span>Joined</span>
-                <span>Actions</span>
+            <div className="admin-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ flex: 1 }}>
+                <h2 className="admin-section-title">All Users ({users.length} total, {filteredUsers.length} shown)</h2>
               </div>
-              {users.map((u) => (
-                <div className="admin-table-row admin-users-row" key={u.id}>
-                  {/* Name + email */}
-                  <div className="admin-user-info">
-                    <div className="admin-user-avatar">
-                      {u.name?.charAt(0).toUpperCase() || '?'}
-                    </div>
-                    <div>
-                      <div className="admin-user-name">{u.name}</div>
-                      <div className="admin-user-email">{u.email}</div>
-                    </div>
-                  </div>
-
-                  {/* Role badge */}
-                  <span className={`admin-role-badge ${u.role === 'admin' ? 'admin-role-badge--admin' : ''}`}>
-                    {u.role}
-                  </span>
-
-                  {/* Active/inactive badge */}
-                  <span className={`admin-status-badge ${u.is_active ? 'active' : 'inactive'}`}>
-                    {u.is_active ? 'Active' : 'Inactive'}
-                  </span>
-
-                  {/* Join date */}
-                  <span className="admin-table-date">
-                    {formatDate(u.created_at)}
-                  </span>
-
-                  {/* Action buttons */}
-                  <div className="admin-user-actions">
-                    {/* Toggle active */}
+              <div className="admin-filters-row">
+                <input
+                  type="text"
+                  placeholder="🔍︎ Search by email..."
+                  className="admin-search-input"
+                  value={emailSearch}
+                  onChange={(e) => setEmailSearch(e.target.value)}
+                />
+                <select
+                  className="admin-filter-select"
+                  value={roleFilter}
+                  onChange={(e) => setRoleFilter(e.target.value)}
+                >
+                  <option value="all">All Roles</option>
+                  <option value="user">User</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <select
+                  className="admin-filter-select"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                >
+                  <option value="all">All Status</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              </div>
+              <div className="admin-header-info">
+                <button
+                  className="admin-refresh-btn"
+                  onClick={() => {
+                    console.log('[AdminPanel] Manual refresh triggered')
+                    fetchUsers()
+                  }}
+                  title="Refresh user list"
+                  style={{ marginRight: '20px' }}
+                >
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                  </svg>
+                  Refresh
+                </button>
+                {filteredUsers.length > 0 && totalPages > 1 && (
+                  <div className="admin-pagination-controls">
                     <button
-                      className={`admin-action-btn ${u.is_active ? 'deactivate' : 'activate'}`}
-                      title={u.is_active ? 'Deactivate' : 'Activate'}
-                      onClick={() => handleToggleActive(u.id)}
-                    >
-                      {u.is_active ? (
-                        <svg viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z"/>
-                        </svg>
-                      ) : (
-                        <svg viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/>
-                        </svg>
-                      )}
-                    </button>
-
-                    {/* Toggle role */}
-                    <button
-                      className="admin-action-btn role"
-                      title={u.role === 'admin' ? 'Demote to user' : 'Promote to admin'}
-                      onClick={() => handleToggleRole(u.id)}
+                      className="admin-pagination-btn-small"
+                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                      title="Previous page"
                     >
                       <svg viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"/>
+                        <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
                       </svg>
                     </button>
-
-                    {/* Delete */}
+                    <span className="admin-pagination-header">Page {currentPage} of {totalPages}</span>
                     <button
-                      className="admin-action-btn delete"
-                      title="Delete user"
-                      onClick={() => setUserToDelete(u)}
+                      className="admin-pagination-btn-small"
+                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      disabled={currentPage === totalPages}
+                      title="Next page"
                     >
                       <svg viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                        <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
                       </svg>
                     </button>
                   </div>
-                </div>
-              ))}
+                )}
+              </div>
             </div>
+            
+            {/* Loading state */}
+            {loadingUsers ? (
+              <p className="admin-loading">Loading users...</p>
+            ) : (
+              <div className="admin-projects-table">
+                <div className="admin-table-header admin-users-header">
+                  <span>User</span>
+                  <span>Role</span>
+                  <span>Status</span>
+                  <span>Verified</span>
+                  <span>Joined</span>
+                  <span>Last Login</span>
+                  <span>Install Count</span>
+                  <span>Actions</span>
+                </div>
+                {usersOnCurrentPage.map((u) => (
+                  <div className="admin-table-row admin-users-row" key={u.id}>
+                    {/* Name + email */}
+                    <div className="admin-user-info">
+                      <div className="admin-user-avatar">
+                        {u.name?.charAt(0).toUpperCase() || '?'}
+                      </div>
+                      <div>
+                        <div className="admin-user-name">{u.name}</div>
+                        <div className="admin-user-email">{u.email}</div>
+                      </div>
+                    </div>
+
+                    {/* Role badge */}
+                    <span className={`admin-role-badge ${u.role === 'admin' ? 'admin-role-badge--admin' : ''}`}>
+                      {u.role}
+                    </span>
+
+                    {/* Active/inactive badge */}
+                    <span className={`admin-status-badge ${u.is_active ? 'active' : 'inactive'}`}>
+                      {u.is_active ? 'Active' : 'Inactive'}
+                    </span>
+
+                    {/* Verified badge */}
+                    <span className={`admin-status-badge ${u.is_verified ? 'verified' : 'unverified'}`}>
+                      {u.is_verified ? 'Verified' : 'Unverified'}
+                    </span>
+
+                    {/* Join date */}
+                    <span className="admin-table-date">
+                      {formatDate(u.created_at)}
+                    </span>
+
+                    {/* Last login */}
+                    <span className="admin-table-date">
+                      {u.last_login ? formatDate(u.last_login) : 'Never'}
+                    </span>
+
+                    {/* Install count */}
+                    <span className="admin-table-count">
+                      {u.install_count}
+                    </span>
+
+                    {/* Action buttons */}
+                    <div className="admin-user-actions">
+                      {/* Toggle active */}
+                      <button
+                        className={`admin-action-btn ${u.is_active ? 'deactivate' : 'activate'}`}
+                        title={u.is_active ? 'Deactivate' : 'Activate'}
+                        onClick={() => handleToggleActive(u)}
+                      >
+                        {u.is_active ? (
+                          <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z"/>
+                          </svg>
+                        ) : (
+                          <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/>
+                          </svg>
+                        )}
+                      </button>
+
+                      {/* Delete */}
+                      <button
+                        className="admin-action-btn delete"
+                        title="Delete user"
+                        onClick={() => setUserToDelete(u)}
+                      >
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -358,60 +1049,7 @@ function AdminPanel({ onBack }) {
         {activeTab === 'health' && (
           <div className="admin-section">
             <h2 className="admin-section-title">System Health</h2>
-            {loadingHealth ? (
-              <p className="admin-loading">Checking system health...</p>
-            ) : (
-              <div className="admin-health-panel">
-                <div className={`admin-health-status-card ${health ? 'online' : 'offline'}`}>
-                  <div className="admin-health-status-icon">
-                    {health ? (
-                      <svg viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                      </svg>
-                    ) : (
-                      <svg viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
-                      </svg>
-                    )}
-                  </div>
-                  <div>
-                    <div className="admin-health-status-title">
-                      {health ? 'All Systems Operational' : 'Backend Unreachable'}
-                    </div>
-                    <div className="admin-health-status-sub">
-                      {health ? 'Backend is running normally' : 'Could not connect to the backend server'}
-                    </div>
-                  </div>
-                </div>
-
-                {health && typeof health === 'object' && (
-                  <div className="admin-health-details">
-                    {Object.entries(health).map(([key, val]) => (
-                      <div className="admin-health-row" key={key}>
-                        <span className="admin-health-key">{key}</span>
-                        <span className="admin-health-val">{String(val)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <button
-                  className="admin-refresh-btn"
-                  onClick={() => {
-                    setLoadingHealth(true)
-                    healthApi.check()
-                      .then(data => setHealth(data))
-                      .catch(() => setHealth(null))
-                      .finally(() => setLoadingHealth(false))
-                  }}
-                >
-                  <svg viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-                  </svg>
-                  Refresh
-                </button>
-              </div>
-            )}
+            <p className="admin-loading">Health information has been moved to the Overview tab</p>
           </div>
         )}
 
@@ -425,6 +1063,22 @@ function AdminPanel({ onBack }) {
           onConfirm={handleDeleteConfirm}
         />
       )}
+
+      {/* ── Toggle user status modal ── */}
+      {userToToggleStatus && (
+        <ToggleUserStatusModal
+          user={userToToggleStatus}
+          onCancel={() => setUserToToggleStatus(null)}
+          onConfirm={handleToggleStatusConfirm}
+        />
+      )}
+
+      {/* ── Toast notification ── */}
+      <Toast
+        message={toast.message}
+        type={toast.type}
+        onClose={() => setToast({ message: '', type: '' })}
+      />
 
     </div>
   )

@@ -30,6 +30,7 @@ class AuditLogPage(BaseModel):
 
 class AdminUserOut(BaseModel):
     id: str
+    name: str
     email: str
     role: str
     is_active: bool
@@ -64,6 +65,38 @@ class AdminUserPatch(BaseModel):
         if v is not None and v not in ("user", "admin"):
             raise ValueError("role must be 'user' or 'admin'")
         return v
+
+
+class AdminUserDelete(BaseModel):
+    reason: str | None = None
+
+
+# ─── Admin Project Schemas ────────────────────────────────────────────────────
+
+class AdminProjectOut(BaseModel):
+    id: str
+    name: str
+    user_id: str | None
+    type: str | None = None
+    path: str
+    status: str
+    port: int | None
+    pid: int | None
+    created_at: datetime
+    updated_at: datetime
+    metadata_: dict[str, Any] | None = None
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def coerce_status(cls, v) -> str:
+        return v.value if hasattr(v, "value") else str(v)
+
+
+class AdminProjectPage(BaseModel):
+    items: list[AdminProjectOut]
+    total: int
 
 
 # ─── Analytics Schemas ────────────────────────────────────────────────────────
