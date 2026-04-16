@@ -140,7 +140,11 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.3s ease;
-  position:center;
+  display: block;
+  width: fit-content;
+  min-width: 180px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .auth-button:hover {

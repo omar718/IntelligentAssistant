@@ -46,7 +46,7 @@ function Processing({ gitUrl, cloneDir, onBack }) {
         fetch('http://localhost:6009/open-folder', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: status.host_path }),
+          body: JSON.stringify({ path: status.host_path, project_id: status.project_id }),
         }).catch(() => {
           window.location.href = `vscode://file/${normalizedPath}`
         })
@@ -149,7 +149,12 @@ function Processing({ gitUrl, cloneDir, onBack }) {
         .then(result => {
           console.log('[Processing] projectsApi.create succeeded:', result)
           if (stopped || finished) return
-          completeFromTaskStatus({ done: true, stage: 'launching', host_path: result?.host_path })
+          completeFromTaskStatus({
+            done: true,
+            stage: 'launching',
+            host_path: result?.host_path,
+            project_id: result?.project_id,
+          })
         })
         .catch(err => {
           if (stopped) return

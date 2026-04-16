@@ -1,0 +1,14 @@
+version: "3.9"
+services:
+  {{ service_name }}:
+    image: {{ image }}:{{ version }}
+    working_dir: /workspace
+    volumes:
+      - {{ project_path }}:/workspace
+    ports:
+      - "{{ port }}:{{ port }}"
+    environment:
+{% for key, value in env_vars.items() %}
+      {{ key }}: "{{ value }}"
+{% endfor %}
+    command: {{ start_command }}

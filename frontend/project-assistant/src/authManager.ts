@@ -3,6 +3,7 @@ import axios, { AxiosInstance } from "axios";
 
 const TOKEN_KEY = "auth.token";
 const HEALTH_POLL_INTERVAL_MS = 30_000;
+type LogLevel = "info" | "warning" | "error" | "success";
 
 /**
  * AuthManager handles all authentication concerns for the VS Code extension.
@@ -15,21 +16,32 @@ const HEALTH_POLL_INTERVAL_MS = 30_000;
 export class AuthManager {
   private token: string | undefined;
   private apiClient: AxiosInstance;
+  private publicApiClient: AxiosInstance;
   private healthPollTimer: NodeJS.Timeout | undefined;
   private isOnline = false;
   private isSessionVerified = false;
+  private readonly onLog: (message: string, level?: LogLevel) => void;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly statusBar: vscode.StatusBarItem,
     private readonly onOnline: () => void,
-    private readonly onOffline: () => void
+    private readonly onOffline: () => void,
+    onLog?: (message: string, level?: LogLevel) => void
   ) {
+    this.onLog = onLog ?? (() => undefined);
+
     const apiUrl =
       vscode.workspace.getConfiguration("projectAssistant").get<string>("apiUrl") ??
       "http://localhost:8000";
 
     this.apiClient = axios.create({
+      baseURL: apiUrl,
+      withCredentials: true,
+      timeout: 5_000,
+    });
+
+    this.publicApiClient = axios.create({
       baseURL: apiUrl,
       withCredentials: true,
       timeout: 5_000,
@@ -65,11 +77,13 @@ export class AuthManager {
     // Restore token from secure storage
     this.token = await this.context.secrets.get(TOKEN_KEY);
     await this.setAuthContext(false);
+    this.log("Initializing auth state...");
 
     // Check backend availability with 2-second timeout
     const online = await this.checkHealth();
 
     if (online) {
+      this.log("Backend is online.", "success");
       if (this.token) {
         const valid = await this.validateStoredToken();
         if (!valid) {
@@ -78,6 +92,7 @@ export class AuthManager {
       }
 
       this.isOnline = true;
+      this.log("Auth services ready.", "success");
       this.onOnline();
     } else {
       this.isOnline = false;
@@ -95,6 +110,7 @@ export class AuthManager {
   // ---------------------------------------------------------------------------
 
   async login(email: string, password: string): Promise<void> {
+    this.log(`Signing in as ${email}...`);
     const response = await this.apiClient.post<{
       access_token: string;
       user: { id: string; email: string; role: string };
@@ -104,10 +120,12 @@ export class AuthManager {
     await this.storeToken(access_token);
     this.isSessionVerified = true;
     await this.setAuthContext(true);
+    this.log(`Signed in as ${response.data.user.email}.`, "success");
     vscode.window.showInformationMessage(`Signed in as ${response.data.user.email}`);
   }
 
   async logout(): Promise<void> {
+    this.log("Signing out...");
     let logoutError: unknown;
     try {
       await this.apiClient.post("/auth/logout");
@@ -119,6 +137,7 @@ export class AuthManager {
       this.statusBar.text = "$(account) Sign in to Intelligent Assistant";
       this.statusBar.command = "project-assistant.login";
       this.statusBar.show();
+      this.log("Signed out.");
     }
 
     if (axios.isAxiosError(logoutError)) {
@@ -146,6 +165,14 @@ export class AuthManager {
     return this.apiClient;
   }
 
+  getPublicApiClient(): AxiosInstance {
+    return this.publicApiClient;
+  }
+
+  getAccessToken(): string | undefined {
+    return this.token;
+  }
+
   // ---------------------------------------------------------------------------
   // Token storage (OS keychain via SecretStorage)
   // ---------------------------------------------------------------------------
@@ -162,8 +189,18 @@ export class AuthManager {
   }
 
   private async validateStoredToken(): Promise<boolean> {
+    if (!this.token) {
+      this.isSessionVerified = false;
+      await this.setAuthContext(false);
+      return false;
+    }
+
     try {
-      await this.apiClient.get("/api/users/me");
+      // Use the public client here to avoid triggering global 401 side-effects
+      // when simply probing whether a restored token is still valid.
+      await this.publicApiClient.get("/api/users/me", {
+        headers: { Authorization: `Bearer ${this.token}` },
+      });
       this.isSessionVerified = true;
       await this.setAuthContext(true);
       return true;
@@ -233,6 +270,7 @@ export class AuthManager {
       "statusBarItem.warningBackground"
     );
     this.statusBar.show();
+    this.log("Backend offline — waiting for reconnect.", "warning");
   }
 
   private showSessionExpired(): void {
@@ -242,6 +280,7 @@ export class AuthManager {
       "statusBarItem.warningBackground"
     );
     this.statusBar.show();
+    this.log("Session expired. Please sign in again.", "warning");
 
     vscode.window
       .showWarningMessage(
@@ -253,5 +292,9 @@ export class AuthManager {
           vscode.commands.executeCommand("project-assistant.login");
         }
       });
+  }
+
+  private log(message: string, level: LogLevel = "info"): void {
+    this.onLog(message, level);
   }
 }

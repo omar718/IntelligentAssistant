@@ -182,8 +182,77 @@ class NLPProcessor:
                 # README is describing a different stack — trust the actual project files
                 canonical = self._CANONICAL_STEPS.get(info.primary_pm, [])
                 print(f"[NLPProcessor] Using canonical steps for '{info.primary_pm}' due to README conflict")
-                info.steps = canonical
+                info.steps = self._inject_entry_point(canonical, info)
             else:
-                info.steps = nlp_steps
+                info.steps = self._inject_entry_point(nlp_steps, info)
+        elif info.primary_pm:
+            # README may be missing or ambiguous; fall back to canonical steps.
+            canonical = self._CANONICAL_STEPS.get(info.primary_pm, [])
+            info.steps = self._inject_entry_point(canonical, info)
+
+        info.run_command = self._extract_run_command(info.steps)
+        info.launch_port = self._infer_launch_port(info)
 
         return info
+
+    def _inject_entry_point(self, steps: list, info: ProjectInfo) -> list:
+        if not steps:
+            return steps
+
+        if info.primary_language != 'python' or not info.entry_point:
+            return steps
+
+        patched_steps = []
+        for step in steps:
+            command = step.get('command', '')
+            if not isinstance(command, str):
+                patched_steps.append(step)
+                continue
+
+            if 'python main.py' in command:
+                command = command.replace('python main.py', f'python {info.entry_point}')
+            if 'python app.py' in command:
+                command = command.replace('python app.py', f'python {info.entry_point}')
+
+            patched_steps.append({**step, 'command': command})
+
+        return patched_steps
+
+    def _extract_run_command(self, steps: list) -> str | None:
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            if step.get('action') == 'run':
+                command = step.get('command')
+                if isinstance(command, str) and command.strip():
+                    return command.strip()
+        return None
+
+    def _infer_launch_port(self, info: ProjectInfo) -> int | None:
+        command = (info.run_command or '').strip().lower()
+        env_port = info.env_vars.get('PORT')
+        if isinstance(env_port, str) and env_port.isdigit():
+            return int(env_port)
+        if isinstance(env_port, int):
+            return env_port
+
+        match = re.search(r'(?:--port(?:=|\s+)|-p(?:=|\s+)|port=)(\d{2,5})', command)
+        if match:
+            return int(match.group(1))
+
+        if info.primary_language == 'python':
+            if 'streamlit' in command:
+                return 8501
+            if 'flask run' in command:
+                return 5000
+            if 'uvicorn' in command or 'gunicorn' in command or 'django' in command or 'manage.py' in command:
+                return 8000
+            return 8000
+
+        if info.primary_language == 'nodejs':
+            return 3000
+
+        if info.primary_language == 'php':
+            return 8000
+
+        return None

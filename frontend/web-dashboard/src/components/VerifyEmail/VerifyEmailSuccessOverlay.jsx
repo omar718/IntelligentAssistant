@@ -20,7 +20,6 @@ function VerifyEmailSuccessOverlay({ onGoLogin }) {
           type="button"
           className="auth-button"
           onClick={onGoLogin}
-          style={{ display: 'block', margin: '0.5rem auto 0' }}
         >
           Go to Login
         </button>
