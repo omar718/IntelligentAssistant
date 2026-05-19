@@ -17,10 +17,14 @@ from app.core.analysis.project_analyzer import ProjectAnalyzer
 from app.core.analysis.nlp_processor import NLPProcessor
 from app.core.database import get_db                     # ← one import, always async
 from app.api.dependencies import CurrentUser
-from app.websocket.router import manager
 from app.db.crud import project_crud
 from app.models.project import Project, ProjectStatus
-from app.tasks.install import install_project
+from app.core.redis import (
+    set_task_state,
+    get_task_state,
+    is_task_cancelled,
+    set_task_cancelled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,110 +149,6 @@ class CreateProjectRequest(BaseModel):
     source: ProjectSource
     task_id: Optional[str] = None
 
-class ValidateRepositoryRequest(BaseModel):
-    url: str
-
-class ValidateRepositoryResponse(BaseModel):
-    valid: bool
-    error: Optional[str] = None
-
-def _validate_git_repo(git_url: str) -> tuple[bool, str]:
-    """
-    Validate if a git repository is accessible using git ls-remote.
-    Returns (is_valid, error_message)
-    """
-    if not git_url or not git_url.strip():
-        return False, "Repository URL cannot be empty"
-    
-    git_url = git_url.strip()
-    
-    # Ensure HTTPS URL has proper format
-    if git_url.startswith('git@'):
-        # SSH URLs: git@github.com:user/repo.git
-        pass
-    elif not git_url.startswith('http://') and not git_url.startswith('https://'):
-        # If URL doesn't end with http:// or https://, assume https://
-        git_url = f"https://{git_url}"
-    
-    # Ensure .git suffix for proper git ls-remote validation
-    if not git_url.endswith('.git'):
-        git_url_with_git = f"{git_url}.git"
-    else:
-        git_url_with_git = git_url
-    
-    env = os.environ.copy()
-    # Disable SSL verification for self-signed certificates (can add config option later)
-    env['GIT_SSL_NO_VERIFY'] = '1'
-    
-    try:
-        # Try with .git suffix first
-        logger.debug(f"[Validate] Attempting git ls-remote with .git suffix: {git_url_with_git}")
-        result = subprocess.run(
-            ['git', 'ls-remote', '--heads', git_url_with_git],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env=env
-        )
-        
-        if result.returncode == 0:
-            logger.info(f"[Validate] Repository valid: {git_url}")
-            return True, ""
-        
-        # If .git suffix failed and URL doesn't already have it, try without .git
-        if git_url_with_git.endswith('.git') and not git_url.endswith('.git'):
-            logger.debug(f"[Validate] Retrying without .git suffix: {git_url}")
-            result = subprocess.run(
-                ['git', 'ls-remote', '--heads', git_url],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                env=env
-            )
-            if result.returncode == 0:
-                logger.info(f"[Validate] Repository valid (without .git): {git_url}")
-                return True, ""
-        
-        # Provide more detailed error messages
-        error_output = result.stderr.strip() if result.stderr else result.stdout.strip()
-        
-        if result.returncode == 128:
-            return False, f"Repository not found or not accessible: {git_url}"
-        elif result.returncode == 1:
-            # Often means authentication required or repo doesn't exist
-            if 'not found' in error_output.lower() or 'does not exist' in error_output.lower():
-                return False, f"Repository not found: {git_url}"
-            return False, f"Failed to access repository. Please verify the URL is correct and the repo is public or you have access."
-        elif result.returncode in [2, 127]:
-            return False, "Git command not available or malformed URL"
-        else:
-            return False, f"Repository validation failed: {error_output if error_output else f'exit code {result.returncode}'}"
-    
-    except subprocess.TimeoutExpired:
-        return False, "Repository validation timed out (>10s). The repository might be unavailable."
-    except FileNotFoundError:
-        return False, "Git is not installed on the server. Contact administrator."
-    except Exception as e:
-        logger.error(f"[Validate] Unexpected error validating {git_url}: {str(e)}")
-        return False, f"Validation error: {str(e)}"
-
-@router.post("/api/projects/validate", response_model=ValidateRepositoryResponse)
-async def validate_repository(req: ValidateRepositoryRequest, current_user: CurrentUser):
-    """Quick validation that a git repo exists without cloning it."""
-    if not req.url:
-        return ValidateRepositoryResponse(valid=False, error="Repository URL is required")
-    
-    logger.info("[Validate] Checking repository: %s", req.url)
-    loop = asyncio.get_event_loop()
-    is_valid, error_msg = await loop.run_in_executor(None, _validate_git_repo, req.url)
-    
-    if is_valid:
-        logger.info("[Validate] Repository is valid: %s", req.url)
-        return ValidateRepositoryResponse(valid=True)
-    else:
-        logger.warning("[Validate] Repository validation failed: %s - %s", req.url, error_msg)
-        return ValidateRepositoryResponse(valid=False, error=error_msg)
-
 @router.post("/api/projects")
 async def create_project(
     req: CreateProjectRequest,
@@ -290,12 +190,7 @@ async def create_project(
                 message="Cloning repository...",
             )
             loop = asyncio.get_event_loop()
-            try:
-                project_path = await loop.run_in_executor(None, _clone_repo, req.source.url, target_base, task_id, loop)
-            except subprocess.CalledProcessError as e:
-                if e.returncode == 128:
-                    raise HTTPException(status_code=400, detail=f"The following repo {req.source.url} is not found! Make sure that is existing.")
-                raise HTTPException(status_code=500, detail=f"Git clone failed: {str(e)}")
+            project_path = await loop.run_in_executor(None, _clone_repo, req.source.url, target_base, task_id, loop)
 
         elif req.source.type == "local":
             if not req.source.path:
@@ -339,18 +234,6 @@ async def create_project(
             )
             nlp_result = await loop.run_in_executor(None, nlp.parse_readme, project_path)
             info = nlp.merge_with_project_info(info, nlp_result)
-            primary_language = info.primary_language
-
-            # If analyzer missed it, derive from version_constraints
-            if not primary_language and info.version_constraints:
-                vc = info.version_constraints
-                if 'php' in vc:    primary_language = 'php'
-                elif 'python' in vc: primary_language = 'python'
-                elif 'node' in vc:   primary_language = 'nodejs'
-                elif 'java' in vc:   primary_language = 'java'
-                elif 'ruby' in vc:   primary_language = 'ruby'
-                elif 'go' in vc:     primary_language = 'go'
-
         except Exception as e:
             logger.warning("NLP analysis failed (non-fatal): %s", e)
 
@@ -370,16 +253,13 @@ async def create_project(
                 "id": project_id,
                 "name": project_name,
                 "user_id": current_user.id,      # <-- added user_id
-                "type": primary_language,
+                "type": info.primary_language,
                 "path": str(project_path),
-                "port": info.launch_port,
                 "status": ProjectStatus.queued,
                 "metadata_": {
-                    "host_path": container_path_to_host(project_path),
+                    "source_type": "git",
+                    "source_url": repository_url,
                     "detected_pm": info.primary_pm,
-                    "entry_point": info.entry_point,
-                    "run_command": info.run_command,
-                    "launch_port": info.launch_port,
                     "steps": info.steps,
                     "env_vars": info.env_vars,
                     "version_constraints": info.version_constraints,
@@ -407,15 +287,11 @@ async def create_project(
             "task_id": task_id,
             "detected_type": info.primary_language,
             "detected_pm": info.primary_pm,
-            "entry_point": info.entry_point,
-            "run_command": info.run_command,
-            "launch_port": info.launch_port,
             "path": str(project_path),
             "host_path": host_path,
             "steps": info.steps,
             "env_vars": info.env_vars,
             "version_constraints": info.version_constraints,
-            "host_path": host_path,
         }
 
     except TaskCancelledError:
@@ -505,60 +381,7 @@ async def get_project(
         "metadata": project.metadata_,
     }
 
-
-@router.get("/api/projects/{project_id}/status")
-async def get_project_status(
-    project_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    """Public lightweight status endpoint used by VS Code install polling."""
-    result = await db.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    return {
-        "id": project.id,
-        "type": project.type,
-        "path": project.path,
-        "status": project.status,
-        "port": project.port,
-        "metadata": project.metadata_,
-    }
-
-
-@router.post("/api/projects/{project_id}/install")
-async def trigger_install(
-    project_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(404, "Project not found")
-
-    project.status = ProjectStatus.installing
-    await db.commit()
-
-    # Tell the extension to start installing
-    # The extension is subscribed to this project's WS channel
-    await manager.broadcast(project_id, {
-        "event": "start_installation",
-        "data": {
-            "project_id": project_id,
-            "host_path": project.metadata_.get("host_path"),
-            "project_type": project.type,
-            "detected_pm": project.metadata_.get("detected_pm"),
-            "steps": project.metadata_.get("steps", []),
-            "env_vars": project.metadata_.get("env_vars", {}),
-            "version_constraints": project.metadata_.get("version_constraints", {}),
-            "run_command": project.metadata_.get("run_command"),
-            "launch_port": project.metadata_.get("launch_port", 3000),
-        },
-    })
-
-    return {"status": "installing", "project_id": project_id}
-
+#------------------------------------------------
 # GET api/user/me/projects is defined in auth.py
 #------------------------------------------------
 
@@ -698,87 +521,5 @@ def _clone_repo(git_url: str, base_dir: Path, task_id: Optional[str], loop: asyn
     if target.exists():
         _run_git_with_progress(['git', '-C', str(target), 'pull', '--progress'], task_id, 10, 60, 'Updating repository...', loop)
     else:
-        _run_git_with_progress(['git', 'clone', '--progress', git_url, str(target)], task_id, 10, 60, 'Cloning repository...')
+        _run_git_with_progress(['git', 'clone', '--progress', git_url, str(target)], task_id, 10, 60, 'Cloning repository...', loop)
     return target
-
-class InstallLogRequest(BaseModel):
-    message: str
-    level: str = "info"
-
-class InstallCompleteRequest(BaseModel):
-    success: bool
-    error: Optional[str] = None
-    port: Optional[int] = None
-
-
-@router.post("/api/projects/{project_id}/install-log")
-async def install_log(
-    project_id: str,
-    body: InstallLogRequest,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-):
-    """Extension streams install output lines here — we relay to dashboard WS."""
-    await manager.broadcast(project_id, {
-        "event": "log",
-        "data": {"level": body.level, "message": body.message},
-    })
-    return {"ok": True}
-
-
-@router.post("/api/projects/{project_id}/install-progress")
-async def install_progress(
-    project_id: str,
-    body: dict,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-):
-    """Extension reports progress percentage here — we relay to dashboard WS."""
-    await manager.broadcast(project_id, {
-        "event": "installation_progress",
-        "data": body,
-    })
-    return {"ok": True}
-
-
-@router.post("/api/projects/{project_id}/install-complete")
-async def install_complete(
-    project_id: str,
-    body: InstallCompleteRequest,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-):
-    """Extension calls this when installation finishes (success or failure)."""
-    result = await db.execute(
-        select(Project).where(Project.id == project_id)
-    )
-    project = result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(404)
-
-    if body.success:
-        project.status = ProjectStatus.running
-        if body.port:
-            project.port = body.port
-        await db.commit()
-        await manager.broadcast(project_id, {
-            "event": "status_change",
-            "data": {
-                "old_status": "installing",
-                "new_status": "running",
-                "port": body.port or 3000,
-            },
-        })
-    else:
-        project.status = ProjectStatus.failed
-        await db.commit()
-        await manager.broadcast(project_id, {
-            "event": "status_change",
-            "data": {
-                "old_status": "installing",
-                "new_status": "failed",
-                "error": body.error or "Installation failed",
-            },
-        })
-
-    return {"ok": True}

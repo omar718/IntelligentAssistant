@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { authApi } from '../api/client'
 import '../styles/Auth.css'
 
 function SignupOverlay({ onNavigate, onClose, onVerificationNeeded }) {
+  const { t } = useTranslation()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -31,20 +33,20 @@ function SignupOverlay({ onNavigate, onClose, onVerificationNeeded }) {
     // Validate password strength
     if (password.trim() && !isPasswordStrong) {
       setEmptyFields({})
-      setError('Password must contain at least one capital letter, 8+ characters, and a number.')
+      setError(t('auth.passwordRulesFull'))
       return
     }
     if (!confirmPassword.trim()) empty.confirmPassword = true
 
     if (Object.keys(empty).length > 0) {
       setEmptyFields(empty)
-      setError('Please fill in all fields.')
+      setError(t('auth.pleaseFillInAllFields'))
       return
     }
 
     if (password !== confirmPassword) {
       setEmptyFields({})
-      setError('Passwords do not match.')
+      setError(t('auth.passwordsDoNotMatch'))
       return
     }
 
@@ -74,16 +76,16 @@ function SignupOverlay({ onNavigate, onClose, onVerificationNeeded }) {
     <div className="auth-modal-overlay" onClick={onClose}>
       <div className="auth-card" onClick={(e) => e.stopPropagation()}>
 
-        <button className="auth-modal-close" onClick={onClose} title="Close">
+        <button className="auth-modal-close" onClick={onClose} title={t('auth.close')}>
           &times;
         </button>
 
-        <h1 className="auth-title">Sign Up</h1>
-        <p className="auth-subtitle">Create your account to get started.</p>
+        <h1 className="auth-title">{t('auth.signUpTitle')}</h1>
+        <p className="auth-subtitle">{t('auth.signUpSubtitle')}</p>
 
         <form className="auth-form" onSubmit={handleSubmit}>
           <div className="auth-field">
-            <label className="auth-label" htmlFor="signup-name">Full Name</label>
+            <label className="auth-label" htmlFor="signup-name">{t('auth.fullName')}</label>
             <input
               id="signup-name"
               type="text"
@@ -95,7 +97,7 @@ function SignupOverlay({ onNavigate, onClose, onVerificationNeeded }) {
           </div>
 
           <div className="auth-field">
-            <label className="auth-label" htmlFor="signup-email">Email</label>
+            <label className="auth-label" htmlFor="signup-email">{t('auth.emailLabel')}</label>
             <input
               id="signup-email"
               type="email"
@@ -107,7 +109,7 @@ function SignupOverlay({ onNavigate, onClose, onVerificationNeeded }) {
           </div>
 
           <div className="auth-field">
-            <label className="auth-label" htmlFor="signup-password">Password</label>
+            <label className="auth-label" htmlFor="signup-password">{t('auth.passwordLabel')}</label>
             <div className="password-wrapper">
               <input
                 id="signup-password"
@@ -147,7 +149,7 @@ function SignupOverlay({ onNavigate, onClose, onVerificationNeeded }) {
                       <polyline points="20 6 9 17 4 12"></polyline>
                     </svg>
                   </div>
-                  <span>One capital letter (A-Z)</span>
+                  <span>{t('auth.oneCapitalLetter')}</span>
                 </div>
                 <div className={`auth-requirement ${hasAtLeastEight ? 'auth-requirement-met' : ''}`}>
                   <div className="auth-requirement-icon">
@@ -155,7 +157,7 @@ function SignupOverlay({ onNavigate, onClose, onVerificationNeeded }) {
                       <polyline points="20 6 9 17 4 12"></polyline>
                     </svg>
                   </div>
-                  <span>At least 8 characters</span>
+                  <span>{t('auth.atLeastEightCharacters')}</span>
                 </div>
                 <div className={`auth-requirement ${hasNumber ? 'auth-requirement-met' : ''}`}>
                   <div className="auth-requirement-icon">
@@ -163,14 +165,14 @@ function SignupOverlay({ onNavigate, onClose, onVerificationNeeded }) {
                       <polyline points="20 6 9 17 4 12"></polyline>
                     </svg>
                   </div>
-                  <span>One number (0-9)</span>
+                  <span>{t('auth.oneNumber')}</span>
                 </div>
               </div>
             )}
           </div>
 
           <div className="auth-field">
-            <label className="auth-label" htmlFor="signup-confirm">Confirm Password</label>
+            <label className="auth-label" htmlFor="signup-confirm">{t('auth.confirmNewPassword')}</label>
             <div className="password-wrapper">
               <input
                 id="signup-confirm"
@@ -204,14 +206,14 @@ function SignupOverlay({ onNavigate, onClose, onVerificationNeeded }) {
           {error && <p className="auth-error">{error}</p>}
 
           <button type="submit" className="auth-button" disabled={loading}>
-            {loading ? 'Creating account...' : 'Sign Up'}
+            {loading ? t('auth.creatingAccount') : t('auth.signUpTitle')}
           </button>
         </form>
 
         <p className="auth-switch-text">
-          Already have an account?{' '}
+          {t('home.alreadyHaveAccount')}{' '}
           <span className="auth-switch-link" onClick={() => onNavigate('login-modal')}>
-            Login
+            {t('app.login')}
           </span>
         </p>
 

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { jsPDF } from 'jspdf'
 import { userApi } from '../api/client'
 import TechBadge from './TechBadge'
@@ -17,9 +18,9 @@ function parseBackendDate(value) {
   return new Date(normalized)
 }
 
-function formatDate(iso) {
+function formatDate(iso, naLabel = 'N/A') {
   const date = parseBackendDate(iso)
-  if (!date || Number.isNaN(date.getTime())) return 'N/A'
+  if (!date || Number.isNaN(date.getTime())) return naLabel
 
   return date.toLocaleDateString('en-US', {
     year: 'numeric', month: 'short', day: 'numeric',
@@ -70,7 +71,7 @@ function resolveRepositoryUrl(project) {
   return null
 }
 
-function handleDownload(project) {
+function handleDownload(project, t) {
   const doc = new jsPDF()
   const pageWidth = doc.internal.pageSize.getWidth()
   const maxTextWidth = pageWidth - 28
@@ -78,19 +79,19 @@ function handleDownload(project) {
   let y = 20
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(18)
-  doc.text(`Project Report - ${project.name}`, 14, y)
+  doc.text(t('projects.projectReport', { name: project.name }), 14, y)
 
   y += 10
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(11)
-  doc.text(`Generated: ${new Date().toLocaleString()}`, 14, y)
+  doc.text(t('projects.generatedAt', { value: new Date().toLocaleString() }), 14, y)
 
   y += 14
   const sections = [
-    ['Type',       project.type    || 'N/A'],
-    ['Status',     project.status  || 'N/A'],
-    ['Port',       project.port    ? String(project.port) : 'N/A'],
-    ['Created at', project.created_at ? formatDate(project.created_at) : 'N/A'],
+    [t('projects.type'),       project.type    || t('common.na')],
+    [t('projects.status'),     project.status  || t('common.na')],
+    [t('projects.port'),       project.port    ? String(project.port) : t('common.na')],
+    [t('projects.createdAt'), project.created_at ? formatDate(project.created_at) : t('common.na')],
   ]
 
   sections.forEach(([label, value]) => {
@@ -111,6 +112,7 @@ function handleDownload(project) {
 
 // ── Project card ───────────────────────────────────────────────────────────────
 function ProjectCard({ project, onDeleteRequest, isPinned, onTogglePin }) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const repositoryUrl = resolveRepositoryUrl(project)
 
@@ -129,24 +131,24 @@ function ProjectCard({ project, onDeleteRequest, isPinned, onTogglePin }) {
                 href={repositoryUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                title="Open GitHub repository"
+                title={t('projects.openGitHubRepository')}
               >
                 {project.name}
               </a>
             ) : (
-              <span className="project-card-name" title="Repository URL unavailable for this project">
+              <span className="project-card-name" title={t('projects.repositoryUrlUnavailable')}>
                 {project.name}
               </span>
             )}
             <button
               className={`pin-btn ${isPinned ? 'pin-btn--active' : ''}`}
               onClick={() => onTogglePin(project.id)}
-              title={isPinned ? 'Unpin project' : 'Pin project'}
+              title={isPinned ? t('projects.unpin') : t('projects.pin')}
             >
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M16 9V4l1-1V2H7v1l1 1v5l-2 2v1h5v8h2v-8h5v-1z"/>
               </svg>
-              {isPinned ? 'Pinned' : 'Pin'}
+              {isPinned ? t('projects.pinned') : t('projects.pin')}
             </button>
           </div>
           {repositoryUrl && (
@@ -166,31 +168,31 @@ function ProjectCard({ project, onDeleteRequest, isPinned, onTogglePin }) {
             <svg viewBox="0 0 24 24" fill="currentColor" className="date-clock-icon">
               <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"/>
             </svg>
-            Created at {project.created_at ? formatDate(project.created_at) : '—'}
+            {t('projects.createdAt')} {formatDate(project.created_at, t('common.na'))}
           </span>
           <div className="project-card-actions">
             <button
               className="project-action-btn download-btn"
-              title="Download report"
-              onClick={() => handleDownload(project)}
+              title={t('projects.downloadReport')}
+              onClick={() => handleDownload(project, t)}
             >
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M19 9h-4V3H9v6H5l7 7 7-7zm-14 9v2h14v-2H5z"/>
               </svg>
-              Download
+              {t('projects.downloadReport')}
             </button>
             <button
               className={`project-action-btn more-btn ${open ? 'more-btn--active' : ''}`}
               onClick={() => setOpen(v => !v)}
             >
-              More info
+              {t('projects.moreInfo')}
               <svg viewBox="0 0 24 24" fill="currentColor" className={`more-chevron ${open ? 'open' : ''}`}>
                 <path d="M7 10l5 5 5-5z"/>
               </svg>
             </button>
             <button
               className="project-action-btn delete-btn"
-              title="Delete project"
+              title={t('projects.deleteProject')}
               onClick={() => onDeleteRequest(project)}
             >
               <svg viewBox="0 0 24 24" fill="currentColor">
@@ -207,26 +209,24 @@ function ProjectCard({ project, onDeleteRequest, isPinned, onTogglePin }) {
           <div className="more-info-grid">
             {project.type && (
               <div className="more-info-row">
-                <span className="more-info-label">Runtime</span>
+                <span className="more-info-label">{t('projects.runtime')}</span>
                 <TechBadge name={project.type} />
               </div>
             )}
             {project.status && (
               <div className="more-info-row">
-                <span className="more-info-label">Status</span>
+                <span className="more-info-label">{t('projects.status')}</span>
                 <span className="more-info-value">{project.status}</span>
               </div>
             )}
             {project.port ? (
               <div className="more-info-row">
-                <span className="more-info-label">Port</span>
+                <span className="more-info-label">{t('projects.port')}</span>
                 <span className="more-info-value">{project.port}</span>
               </div>
             ) : null}
             {!project.type && !project.status && (
-              <p className="more-info-pending">
-                Stack details coming in the next update.
-              </p>
+              <p className="more-info-pending">{t('projects.stackDetailsComingSoon')}</p>
             )}
           </div>
         </div>
@@ -237,6 +237,7 @@ function ProjectCard({ project, onDeleteRequest, isPinned, onTogglePin }) {
 
 // ── Delete Confirm Modal ───────────────────────────────────────────────────────
 function DeleteConfirmModal({ project, onCancel, onConfirm }) {
+  const { t } = useTranslation()
   return (
     <div className="delete-modal-overlay" onClick={onCancel}>
       <div className="delete-modal-card" onClick={(e) => e.stopPropagation()}>
@@ -245,14 +246,13 @@ function DeleteConfirmModal({ project, onCancel, onConfirm }) {
             <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
           </svg>
         </div>
-        <h2 className="delete-modal-title">Delete project?</h2>
+        <h2 className="delete-modal-title">{t('projects.deleteProjectQuestion')}</h2>
         <p className="delete-modal-message">
-          Are you sure you want to delete <strong>{project.name}</strong>?<br/>
-          This action cannot be undone.
+          {t('projects.deleteProjectMessage', { name: project.name })}
         </p>
         <div className="delete-modal-actions">
-          <button className="delete-modal-btn cancel" onClick={onCancel}>Cancel</button>
-          <button className="delete-modal-btn confirm" onClick={() => onConfirm(project.id)}>Delete</button>
+          <button className="delete-modal-btn cancel" onClick={onCancel}>{t('projects.cancel')}</button>
+          <button className="delete-modal-btn confirm" onClick={() => onConfirm(project.id)}>{t('projects.delete')}</button>
         </div>
       </div>
     </div>
@@ -261,6 +261,7 @@ function DeleteConfirmModal({ project, onCancel, onConfirm }) {
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 function ProjectsList({ onBack }) {
+  const { t } = useTranslation()
   const [projects, setProjects] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [pinnedProjectIds, setPinnedProjectIds] = useState(() => {
@@ -280,9 +281,9 @@ function ProjectsList({ onBack }) {
   useEffect(() => {
     userApi.getMyProjects()
       .then(data => setProjects(data.items || []))
-      .catch(() => setError('Could not load projects. Please try again.'))
+      .catch(() => setError(t('projects.couldNotLoadProjects')))
       .finally(() => setLoading(false))
-  }, [])
+  }, [t])
 
   useEffect(() => {
     localStorage.setItem(PINNED_PROJECTS_STORAGE_KEY, JSON.stringify(pinnedProjectIds))
@@ -331,11 +332,11 @@ function ProjectsList({ onBack }) {
   return (
     <div className="projects-container">
       <header className="projects-header">
-        <button className="back-button" onClick={onBack} title="Back">
+        <button className="back-button" onClick={onBack} title={t('app.back')}>
           <svg viewBox="0 0 24 24" fill="currentColor" className="back-icon">
             <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
           </svg>
-          Back
+          {t('app.back')}
         </button>
 
         <div className="projects-logo">

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import '../styles/CodeStart.css'
 import LoginOverlay from './LoginOverlay'
 import SignupOverlay from './SignupOverlay'
@@ -28,7 +29,8 @@ function InfoOverlay({ title, message, primaryLabel, onPrimary, linkLabel, onLin
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
-function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout, projectError, onClearProjectError }) {
+function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout, theme, onToggleTheme, projectError, onClearProjectError }) {
+  const { t } = useTranslation()
   const location = useLocation()
   const routerNavigate = useNavigate()
   const [gitUrl, setGitUrl] = useState('')
@@ -152,6 +154,8 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout, projectErro
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
   }
 
+  const getProfileImage = () => user?.profile_picture || user?.profilePicture || ''
+
   // Navigate from sidebar and close it
   const sidebarNavigate = (page) => {
     setSidebarOpen(false)
@@ -168,7 +172,7 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout, projectErro
           <button
           className="hamburger-btn"
           onClick={() => setSidebarOpen(prev => !prev)}
-          title="Menu"
+          title={t('app.menu')}
           >
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/>
@@ -182,7 +186,7 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout, projectErro
             <button
               className="hamburger-btn"
               onClick={() => setSidebarOpen(false)}
-              title="Close menu"
+              title={t('app.closeMenu')}
             >
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/>
@@ -192,45 +196,47 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout, projectErro
           </div>
 
           {/* Sidebar items */}
-          <nav className="sidebar-nav">
-            <button className="sidebar-item sidebar-item--active" onClick={() => setSidebarOpen(false)}>
-              <svg viewBox="0 0 24 24" fill="currentColor" className="sidebar-icon">
-                <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-              </svg>
-              <span>Launch Project</span>
-            </button>
-
-            <button className="sidebar-item" onClick={() => sidebarNavigate('projects')}>
-              <svg viewBox="0 0 24 24" fill="currentColor" className="sidebar-icon">
-                <path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/>
-              </svg>
-              <span>Projects</span>
-            </button>
-            
-            <button className="sidebar-item sidebar-item--active" onClick={() => setSidebarOpen(false)}>
-              {/* ... Launch Project ... */}
+          <nav className="sidebar-nav" aria-label="Sidebar navigation">
+            <div className="sidebar-nav-main">
+              <button className="sidebar-item sidebar-item--active" onClick={() => setSidebarOpen(false)}>
+                <svg viewBox="0 0 24 24" fill="currentColor" className="sidebar-icon">
+                  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                </svg>
+                <span>{t('home.launch')}</span>
               </button>
+
               <button className="sidebar-item" onClick={() => sidebarNavigate('projects')}>
-                {/* ... Projects ... */}
+                <svg viewBox="0 0 24 24" fill="currentColor" className="sidebar-icon">
+                  <path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/>
+                </svg>
+                <span>{t('projects.title')}</span>
+              </button>
+
+              {user ? (
+                <button className="sidebar-item logout-item" onClick={() => { setSidebarOpen(false); handleLogout() }}>
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="sidebar-icon">
+                    <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5-5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
+                  </svg>
+                  <span>{t('app.logout')}</span>
                 </button>
-                <button className="sidebar-item" onClick={() => sidebarNavigate('admin')}>
-                  {/* ... Admin Panel ... */}
-                  </button>
-                  {user ? (
-                    <button className="sidebar-item logout-item" onClick={() => { setSidebarOpen(false); handleLogout() }}>
-                      <svg viewBox="0 0 24 24" fill="currentColor" className="sidebar-icon">
-                        <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5-5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
-                        </svg>
-                        <span>Log Out</span>
-                        </button>
-                        ) : (
-                        <button className="sidebar-item" onClick={() => { setSidebarOpen(false); setInfoOverlay('welcome') }}>
-                          <svg viewBox="0 0 24 24" fill="currentColor" className="sidebar-icon">
-                            <path d="M11 7L9.6 8.4l2.6 2.6H2v2h10.2l-2.6 2.6L11 17l5-5-5-5zm9 12h-8v2h8c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-8v2h8v14z"/>
-                            </svg>
-                            <span>Login</span>
-                            </button>
-                          )}
+              ) : (
+                <button className="sidebar-item" onClick={() => { setSidebarOpen(false); setInfoOverlay('welcome') }}>
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="sidebar-icon">
+                    <path d="M11 7L9.6 8.4l2.6 2.6H2v2h10.2l-2.6 2.6L11 17l5-5-5-5zm9 12h-8v2h8c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-8v2h8v14z"/>
+                  </svg>
+                  <span>{t('app.login')}</span>
+                </button>
+              )}
+            </div>
+
+            <div className="sidebar-nav-bottom">
+              <button className="sidebar-item" onClick={() => sidebarNavigate('settings')}>
+                <svg viewBox="0 0 24 24" fill="currentColor" className="sidebar-icon">
+                  <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 00.12-.64l-1.92-3.32a.5.5 0 00-.6-.22l-2.39.96a7.03 7.03 0 00-1.63-.94l-.36-2.54A.5.5 0 0013.89 2h-3.78a.5.5 0 00-.49.42l-.36 2.54c-.58.23-1.13.54-1.63.94l-2.39-.96a.5.5 0 00-.6.22L2.72 8.48a.5.5 0 00.12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 00-.12.64l1.92 3.32c.13.22.39.31.6.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.54c.04.24.25.42.49.42h3.78c.24 0 .45-.18.49-.42l.36-2.54c.58-.23 1.13-.54 1.63-.94l2.39.96c.22.09.47 0 .6-.22l1.92-3.32a.5.5 0 00-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1112 8a3.5 3.5 0 010 7.5z"/>
+                </svg>
+                <span>{t('app.settings')}</span>
+              </button>
+            </div>
           </nav>
         </div>
       </div>
@@ -241,44 +247,115 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout, projectErro
         <div style={{ width: '40px' }} />
 
         {/* ── User icon or Log In button – top right ── */}
-        {user ? (
-          <div className="user-menu" ref={userMenuRef}>
-            <button
-              className="user-avatar-button"
-              onClick={() => setUserMenuOpen((prev) => !prev)}
-              title={user.name || user.email}
-            >
-              <span className="user-initials">{getInitials(user.name)}</span>
-              <svg viewBox="0 0 24 24" fill="currentColor" className={`chevron-icon ${userMenuOpen ? 'open' : ''}`}>
-                <path d="M7 10l5 5 5-5z"/>
-              </svg>
-            </button>
-
-            {userMenuOpen && (
-              <div className="user-dropdown">
-                <div className="user-dropdown-info">
-                  <span className="user-dropdown-name">{user.name || 'User'}</span>
-                  <span className="user-dropdown-email">{user.email}</span>
-                </div>
-                <div className="user-dropdown-divider" />
-                <button className="dropdown-item logout-item" onClick={handleLogout}>
-                  <svg viewBox="0 0 24 24" fill="currentColor" className="dropdown-icon">
-                    <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5-5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
-                  </svg>
-                  Log Out
-                </button>
-              </div>
-            )}
-          </div>
-        ) : (
+        <div className="header-actions">
           <button
-            className="login-header-button"
-            onClick={() => setInfoOverlay('welcome')}
-            title="Login"
+            className="header-theme-toggle"
+            type="button"
+            onClick={onToggleTheme}
+            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
           >
-            Login
+            <span className="header-theme-toggle-icon" aria-hidden="true">
+              <svg viewBox="0 0 72 24" fill="none">
+  {/* Background circle (the toggle knob) */}
+  <circle
+    cx={theme === 'light' ? 52 : 20}
+    cy="12"
+    r="8"
+    fill="var(--toggle-bg)"
+    opacity="0.95"
+    style={{
+      transition: 'all 0.5s cubic-bezier(0.4, 0, 0.2, 1)'
+    }}
+  />
+
+  {/* Sliding icon container */}
+  <g
+    style={{
+      transform: `translate(${theme === 'light' ? 52 : 20}px, 12px)`,
+      transition: 'transform 0.5s cubic-bezier(0.4, 0, 0.2, 1)'
+    }}
+  >
+    {/* 🌞 Sun */}
+    <g
+      style={{
+        opacity: theme === 'light' ? 1 : 0,
+        transform: `scale(${theme === 'light' ? 1 : 0.6}) rotate(${theme === 'light' ? 0 : 90}deg)`,
+        transformOrigin: 'center',
+        transition: 'all 0.5s ease'
+      }}
+    >
+      <circle cx="0" cy="0" r="4.3" fill="currentColor" />
+      <line x1="0" y1="-7" x2="0" y2="-5" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+      <line x1="0" y1="7" x2="0" y2="5" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+      <line x1="-7" y1="0" x2="-5" y2="0" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+      <line x1="7" y1="0" x2="5" y2="0" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+    </g>
+
+    {/* 🌙 Moon */}
+    <g
+      style={{
+        position: 'absolute', // safe to remove if issues
+        opacity: theme === 'dark' ? 1 : 0,
+        transform: `scale(${theme === 'dark' ? 1 : 0.6}) rotate(${theme === 'dark' ? 0 : -90}deg)`,
+        transformOrigin: 'center',
+        transition: 'all 0.5s ease'
+      }}
+    >
+      <path
+        d="M 0 -7 A 7 7 0 1 0 0 7 A 4.5 7 0 1 1 0 -7 Z"
+        fill="currentColor"
+      />
+    </g>
+  </g>
+</svg>
+            </span>
+            <span className="header-theme-toggle-label">{theme === 'dark' ? t('app.lightMode') : t('app.darkMode')}</span>
           </button>
-        )}
+
+          {user ? (
+            <div className="user-menu" ref={userMenuRef}>
+              <button
+                className="user-avatar-button"
+                onClick={() => setUserMenuOpen((prev) => !prev)}
+                title={user.name || user.email}
+              >
+                {getProfileImage() ? (
+                  <img className="user-avatar-image" src={getProfileImage()} alt={user.name || user.email || t('settings.guestUser')} />
+                ) : (
+                  <span className="user-initials">{getInitials(user.name)}</span>
+                )}
+                <svg viewBox="0 0 24 24" fill="currentColor" className={`chevron-icon ${userMenuOpen ? 'open' : ''}`}>
+                  <path d="M7 10l5 5 5-5z"/>
+                </svg>
+              </button>
+
+              {userMenuOpen && (
+                <div className="user-dropdown">
+                  <div className="user-dropdown-info">
+                    <span className="user-dropdown-name">{user.name || t('settings.guestUser')}</span>
+                    <span className="user-dropdown-email">{user.email}</span>
+                  </div>
+                  <div className="user-dropdown-divider" />
+                  <button className="dropdown-item logout-item" onClick={handleLogout}>
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="dropdown-icon">
+                      <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5-5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
+                    </svg>
+                    {t('app.logout')}
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <button
+              className="login-header-button"
+              onClick={() => setInfoOverlay('welcome')}
+              title={t('app.login')}
+            >
+              {t('app.login')}
+            </button>
+          )}
+        </div>
 
         {/* Logo */}
         <div className="logo">
@@ -305,20 +382,20 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout, projectErro
       {/* ── Main content ── */}
       <main className="codestart-main">
         <h1 className="codestart-title">
-          Install and Launch your web project in seconds.
+          {t('home.title')}
         </h1>
         <p className="codestart-subtitle">
-          The intelligent assistant analyzes, configures the dependencies and automatically launches the project
+          {t('home.subtitle')}
         </p>
 
         <div className="codestart-content">
           <div className="codestart-section git-section">
             <div className="section-header">
-              <h2 className="section-title">Import from GitHub</h2>
+              <h2 className="section-title">{t('home.importFromGitHub')}</h2>
               <button
                 className="git-icon-button"
                 onClick={() => window.open('https://github.com', '_blank')}
-                title="Visit GitHub"
+                title={t('home.visitGitHub')}
               >
                 <svg className="git-icon" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
@@ -335,7 +412,7 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout, projectErro
                       onClearProjectError()
                       setGitUrl('')
                     }}
-                    title="Dismiss and clear"
+                    title={t('app.back')}
                   >
                     ✕
                   </button>
@@ -354,7 +431,7 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout, projectErro
             </div>
             {error && <p className="error-message">{error}</p>}
             <button className="analyze-button" onClick={handleLaunch} disabled={picking}>
-              {picking ? 'Opening...' : 'Launch'}
+              {picking ? t('home.opening') : t('home.launch')}
             </button>
           </div>
         </div>
@@ -363,11 +440,11 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout, projectErro
       {/* ── Overlays ── */}
       {infoOverlay === 'no-account' && (
         <InfoOverlay
-          title="Oops!"
-          message="It seems that you don't have an account yet. You can sign up, log in, or close this popup to continue and launch as guest."
-          primaryLabel="Sign Up"
+          title={t('home.oops')}
+          message={t('home.noAccount')}
+          primaryLabel={t('home.signUp')}
           onPrimary={() => { setInfoOverlay(null); setActiveModal('signup-modal') }}
-          linkLabel={{ prefix: 'Already have an account?', action: 'Login' }}
+          linkLabel={{ prefix: t('home.alreadyHaveAccount'), action: t('app.login') }}
           onLink={() => { setInfoOverlay(null); setActiveModal('login-modal') }}
           onClose={() => { setInfoOverlay(null); void handleAnalyze() }}
         />
@@ -375,11 +452,11 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout, projectErro
 
       {infoOverlay === 'welcome' && (
         <InfoOverlay
-          title="Welcome!"
-          message="Welcome to your favourite web project launcher. For the best experience please log in to your account."
-          primaryLabel="Login"
+          title={t('home.welcome')}
+          message={t('home.welcomeMessage')}
+          primaryLabel={t('app.login')}
           onPrimary={() => { setInfoOverlay(null); setActiveModal('login-modal') }}
-          linkLabel={{ prefix: "Don't have an account yet?", action: 'Sign Up' }}
+          linkLabel={{ prefix: t('home.doNotHaveAccount'), action: t('home.signUp') }}
           onLink={() => { setInfoOverlay(null); setActiveModal('signup-modal') }}
           onClose={() => setInfoOverlay(null)}
         />

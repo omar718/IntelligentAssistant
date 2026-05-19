@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import '../styles/Auth.css'
 import { authApi } from '../api/client'
 import CodeStart from './CodeStart'
 
-const PASSWORD_RULE_ERROR = 'Password must contain at least one capital letter, 8+ characters, and a number.'
-
 function ResetPassword() {
+  const { t } = useTranslation()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const [user] = useState(() => {
@@ -26,11 +26,11 @@ function ResetPassword() {
   useEffect(() => {
     const tokenParam = searchParams.get('token')
     if (!tokenParam) {
-      setError('Invalid reset link. No token provided.')
+      setError(t('auth.invalidResetLinkDetail'))
     } else {
       setToken(tokenParam)
     }
-  }, [searchParams])
+  }, [searchParams, t])
 
   const handleResetPassword = async (e) => {
     e.preventDefault()
@@ -39,20 +39,20 @@ function ResetPassword() {
 
     // Client-side validation
     if (!password) {
-      setError('Password is required')
+      setError(t('auth.passwordRequired'))
       setLoading(false)
       return
     }
 
     const isPasswordStrong = password.length >= 8 && /[A-Z]/.test(password) && /\d/.test(password)
     if (!isPasswordStrong) {
-      setError(PASSWORD_RULE_ERROR)
+      setError(t('auth.passwordRules'))
       setLoading(false)
       return
     }
 
     if (password !== confirmPassword) {
-      setError('Passwords do not match')
+      setError(t('auth.passwordsDoNotMatch'))
       setLoading(false)
       return
     }
@@ -74,9 +74,9 @@ function ResetPassword() {
         setError(detail)
       } else if (Array.isArray(detail)) {
         const firstMessage = detail[0]?.msg
-        setError(typeof firstMessage === 'string' ? firstMessage : 'Failed to reset password. Please try again.')
+        setError(typeof firstMessage === 'string' ? firstMessage : t('auth.failedToResetPassword'))
       } else {
-        setError('Failed to reset password. Please try again.')
+        setError(t('auth.failedToResetPassword'))
       }
     } finally {
       setLoading(false)
@@ -103,14 +103,14 @@ function ResetPassword() {
             >
               <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
             </svg>
-            <h1 className="auth-title" style={{ color: '#ef4444' }}>Invalid Reset Link</h1>
+            <h1 className="auth-title" style={{ color: '#ef4444' }}>{t('auth.invalidResetLink')}</h1>
             <p className="auth-subtitle">{error}</p>
             <button 
               className="auth-button"
               onClick={() => navigate('/', { replace: true })}
               style={{ marginTop: '2rem' }}
             >
-              Back to Home
+              {t('auth.backToHome')}
             </button>
           </div>
         </div>
@@ -139,29 +139,23 @@ function ResetPassword() {
               >
                 <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/>
               </svg>
-              <h1 className="auth-title" style={{ color: '#10b981' }}>Password Reset Successful!</h1>
-              <p className="auth-subtitle">
-                Your password has been successfully updated. You can now log in with your new password.
-              </p>
-              <p className="auth-verification-note">
-                Redirecting you to the home page...
-              </p>
+              <h1 className="auth-title" style={{ color: '#10b981' }}>{t('auth.passwordResetSuccessful')}</h1>
+              <p className="auth-subtitle">{t('auth.passwordResetSuccessDetail')}</p>
+              <p className="auth-verification-note">{t('auth.redirectingHome')}</p>
             </>
           ) : (
             <>
-              <h1 className="auth-title">Reset Your Password</h1>
-              <p className="auth-subtitle">
-                Enter a new password for your account
-              </p>
+              <h1 className="auth-title">{t('auth.resetPassword')}</h1>
+              <p className="auth-subtitle">{t('auth.enterNewPassword')}</p>
 
               <form onSubmit={handleResetPassword} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '2rem' }}>
                 <div className="auth-field">
-                  <label className="auth-label" htmlFor="reset-password">New Password</label>
+                  <label className="auth-label" htmlFor="reset-password">{t('auth.newPassword')}</label>
                   <div className="password-wrapper">
                     <input
                       id="reset-password"
                       type={showPassword ? 'text' : 'password'}
-                      placeholder="New password"
+                      placeholder={t('auth.newPasswordPlaceholder')}
                       className="auth-input"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
@@ -190,12 +184,12 @@ function ResetPassword() {
                 </div>
 
                 <div className="auth-field">
-                  <label className="auth-label" htmlFor="reset-confirm-password">Confirm New Password</label>
+                  <label className="auth-label" htmlFor="reset-confirm-password">{t('auth.confirmNewPassword')}</label>
                   <div className="password-wrapper">
                     <input
                       id="reset-confirm-password"
                       type={showConfirmPassword ? 'text' : 'password'}
-                      placeholder="Confirm password"
+                      placeholder={t('auth.confirmPasswordPlaceholder')}
                       className="auth-input"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
@@ -235,19 +229,19 @@ function ResetPassword() {
                     marginTop: '1rem',
                   }}
                 >
-                  {loading ? 'Resetting...' : 'Reset Password'}
+                  {loading ? t('auth.resetting') : t('auth.resetPassword')}
                 </button>
               </form>
 
               <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
                 <p className="auth-switch-text">
-                  Remember your password?{' '}
+                  {t('auth.rememberPassword')}{' '}
                   <span 
                     className="auth-switch-link" 
                     onClick={() => navigate('/', { replace: true })}
                     style={{ cursor: 'pointer' }}
                   >
-                    Go back home
+                    {t('auth.backToHome')}
                   </span>
                 </p>
               </div>

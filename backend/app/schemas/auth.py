@@ -90,6 +90,23 @@ class ResetPasswordRequest(BaseModel):
         return self
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+    confirm_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        return validate_password_strength(v)
+
+    @model_validator(mode="after")
+    def passwords_match(self) -> "ChangePasswordRequest":
+        if self.new_password != self.confirm_password:
+            raise ValueError("Passwords do not match")
+        return self
+
+
 # ---------------------------------------------------------------------------
 # Response schemas  (password_hash NEVER included)
 # ---------------------------------------------------------------------------
@@ -98,11 +115,13 @@ class UserProfile(BaseModel):
     id: str
     name: str
     email: str
+    profile_picture: Optional[str] = None
     role: str
     is_active: bool
     is_verified: bool
     created_at: datetime
     last_login: Optional[datetime] = None
+    password_last_changed: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 
@@ -153,3 +172,13 @@ class UserStats(BaseModel):
     successful_installs: int
     success_rate: float           # 0.0 – 100.0
     most_used_stack: Optional[str]
+
+
+class SessionInfo(BaseModel):
+    session_id: str
+    device_info: Optional[str] = None
+    ip_address: Optional[str] = None
+    created_at: datetime
+    last_activity: Optional[datetime] = None
+    is_active: bool
+    current: bool = False

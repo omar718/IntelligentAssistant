@@ -1,9 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { projectsApi } from '../api/client'
 import '../styles/Processing.css'
 
-function Processing({ gitUrl, cloneDir, onBack, onError }) {
+function Processing({ gitUrl, cloneDir, onBack, onVSCodeNotFound, onError }) {
+  const { t } = useTranslation()
   const [completed, setCompleted] = useState(false)
+  const [showSuccessPopup, setShowSuccessPopup] = useState(false)
   const [error, setError] = useState(null)
   const [isCancelling, setIsCancelling] = useState(false)
   const [taskProgress, setTaskProgress] = useState(0)
@@ -35,24 +38,22 @@ function Processing({ gitUrl, cloneDir, onBack, onError }) {
       if (pollInterval) clearInterval(pollInterval)
 
       if ((status.stage || '').toLowerCase() === 'failed' || status.error) {
-        setError(status.error || 'Project creation failed.')
+        setError(status.error || t('processing.projectCreationFailed'))
         return
       }
 
       setCompleted(true)
+      setShowSuccessPopup(true)
 
       if (status.host_path) {
-        const normalizedPath = status.host_path.replace(/\\/g, '/')
         fetch('http://localhost:6009/open-folder', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path: status.host_path, project_id: status.project_id }),
         }).catch(() => {
-          window.location.href = `vscode://file/${normalizedPath}`
+          if (onVSCodeNotFound) onVSCodeNotFound()
         })
       }
-
-      setTimeout(onBack, 2500)
     }
 
     const applyTaskStatus = (status) => {
@@ -82,7 +83,7 @@ function Processing({ gitUrl, cloneDir, onBack, onError }) {
         finished = true
         if (pollInterval) clearInterval(pollInterval)
         console.log('[Processing] Polling exceeded 10 minute timeout')
-        setError('Task took too long. Please try again.')
+        setError(t('processing.taskTookTooLong'))
         return
       }
       
@@ -106,7 +107,7 @@ function Processing({ gitUrl, cloneDir, onBack, onError }) {
           finished = true
           if (pollInterval) clearInterval(pollInterval)
           console.log('[Processing] Auth error detected, stopping poll:', { statusCode, errMsg })
-          setError('Session expired. Please sign in again and relaunch the project.')
+          setError(t('processing.sessionExpired'))
           return
         }
         
@@ -116,7 +117,7 @@ function Processing({ gitUrl, cloneDir, onBack, onError }) {
           if (notFoundCount >= 15) { // Wait ~10 seconds (15 * 700ms)
             finished = true
             if (pollInterval) clearInterval(pollInterval)
-            setError('Task status not found. The backend might have restarted.')
+            setError(t('processing.taskNotFound'))
           }
           return
         }
@@ -126,7 +127,7 @@ function Processing({ gitUrl, cloneDir, onBack, onError }) {
           finished = true
           if (pollInterval) clearInterval(pollInterval)
           console.log('[Processing] Too many poll errors, stopping')
-          setError(`Task polling failed repeatedly: ${errMsg}`)
+          setError(`${t('processing.pollingFailed')} ${errMsg}`)
           return
         }
         
@@ -168,7 +169,7 @@ function Processing({ gitUrl, cloneDir, onBack, onError }) {
           if (statusCode === 401 || statusCode === 403 || detail?.includes('invalid') || detail?.includes('expired')) {
             finished = true
             if (pollInterval) clearInterval(pollInterval)
-            setError('Session expired. Please sign in again and relaunch the project.')
+            setError(t('processing.sessionExpired'))
             return
           }
 
@@ -186,7 +187,7 @@ function Processing({ gitUrl, cloneDir, onBack, onError }) {
           }
           
           if (detail && !finished) {
-            setError(`Project creation request failed: ${detail}`)
+            setError(`${t('processing.projectRequestFailed')} ${detail}`)
             if (pollInterval) clearInterval(pollInterval)
           }
         })
@@ -206,7 +207,7 @@ function Processing({ gitUrl, cloneDir, onBack, onError }) {
       await projectsApi.cancelTask(taskIdRef.current)
       onBack()
     } catch (err) {
-      setError(err?.response?.data?.detail || 'Could not cancel task.')
+      setError(err?.response?.data?.detail || t('processing.couldNotCancelTask'))
       setIsCancelling(false)
     }
   }
@@ -237,34 +238,52 @@ function Processing({ gitUrl, cloneDir, onBack, onError }) {
 
       <main className="processing-main">
         <div className="processing-box">
-          <h1 className="processing-title">Getting everything ready...</h1>
+          <h1 className="processing-title">{t('processing.gettingEverythingReady')}</h1>
           <p className="processing-repo">{gitUrl}</p>
 
           {!completed && !error && (
             <>
-              <p className="in-progress-blink">IN PROGRESS</p>
-              <p className="processing-repo">Progress: {taskProgress.toFixed(1)}%</p>
+              <p className="in-progress-blink">{t('processing.inProgress')}</p>
+              <p className="processing-repo">{t('processing.progress')}: {taskProgress.toFixed(1)}%</p>
               <p className="processing-repo">{taskMessage}</p>
               <button className="processing-cancel-btn" onClick={handleCancel} disabled={isCancelling}>
-                {isCancelling ? 'Cancelling...' : 'Cancel'}
+                {isCancelling ? t('processing.cancelling') : t('processing.cancel')}
               </button>
             </>
           )}
 
           {completed && (
             <p className="completion-text">
-              Opening in VS code...
+              {t('processing.openingInVsCode')}
             </p>
           )}
 
           {error && (
             <div className="error-text">
-              <p>Error: {error}</p>
-              <button onClick={onBack}>Go back</button>
+              <p>{t('processing.errorPrefix')} {error}</p>
+              <button onClick={onBack}>{t('processing.goBack')}</button>
             </div>
           )}
         </div>
       </main>
+
+      {showSuccessPopup && (
+        <div className="processing-popup-overlay" role="dialog" aria-modal="true" aria-labelledby="success-popup-title">
+          <div className="processing-popup-card">
+            <h2 id="success-popup-title" className="processing-popup-title">{t('processing.openSuccess')}</h2>
+            <p className="processing-popup-message">{t('processing.openSuccessMessage')}</p>
+            <button
+              className="processing-popup-btn"
+              onClick={() => {
+                setShowSuccessPopup(false)
+                onBack()
+              }}
+            >
+              {t('processing.backHome')}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

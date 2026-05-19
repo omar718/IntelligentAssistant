@@ -124,6 +124,43 @@ export const userApi = {
   // Get the stats for the logged-in user
   getMyStats: () =>
     api.get('/api/users/me/stats').then(r => r.data),
+
+  // List active sessions for the logged-in user
+  getActiveSessions: () =>
+    api.get('/api/sessions').then(r => r.data),
+
+  // Log out all sessions except the current one
+  logoutAllSessionsExceptCurrent: () =>
+    api.post('/api/sessions/logout-all').then(r => r.data),
+
+  // Log out a specific session
+  logoutSession: (sessionId: string) =>
+    api.delete(`/api/sessions/${sessionId}`).then(r => r.data),
+
+  // Change password for the logged-in user
+  changePassword: (data: { current_password: string; new_password: string; confirm_password: string }) =>
+    api.post('/api/users/me/change-password', data).then(r => r.data),
+
+  // Upload profile picture for the logged-in user
+  uploadProfileImage: (file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    return axios.post(
+      `${(import.meta as any).env.VITE_API_URL || ''}/api/users/me/profile-picture`,
+      formData,
+      {
+        withCredentials: true,
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('access_token') || ''}`,
+        },
+      },
+    ).then(r => r.data)
+  },
+
+  // Remove profile picture for the logged-in user
+  removeProfileImage: () =>
+    api.delete('/api/users/me/profile-picture').then(r => r.data),
 };
 
 // ── Health check ───────────────────────────────────────────────────────────────

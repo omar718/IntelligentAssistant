@@ -1,10 +1,12 @@
+import { useTranslation } from 'react-i18next'
 import '../styles/VSCodeModal.css'
 
 function VSCodeModal({ onClose }) {
+  const { t } = useTranslation()
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose} title="Close">
+        <button className="modal-close" onClick={onClose} title={t('modal.close')}>
           <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
           </svg>
@@ -18,22 +20,22 @@ function VSCodeModal({ onClose }) {
           </svg>
         </div>
 
-        <h2 className="modal-title">Oops!</h2>
+        <h2 className="modal-title">{t('modal.vscodeNotFoundTitle')}</h2>
         <p className="modal-message">
-          The project launcher couldn't detect VS Code installed. Please install it via{' '}
+          {t('modal.vscodeNotFoundMessage')}{' '}
           <a
             href="https://code.visualstudio.com/download"
             target="_blank"
             rel="noreferrer"
             className="modal-link"
           >
-            this link
+            {t('modal.downloadLink')}
           </a>{' '}
-          to benefit from our assistant.
+          {t('modal.vscodeNotFoundTail')}
         </p>
 
         <button className="modal-action-btn" onClick={onClose}>
-          Got it
+          {t('modal.gotIt')}
         </button>
       </div>
     </div>

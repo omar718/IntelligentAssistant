@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
+from pathlib import Path
+import secrets
 from typing import Optional
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import RedirectResponse
 from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +26,7 @@ from app.core.security import (
 )
 from app.models.user import User
 from app.schemas.auth import (
+    ChangePasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
     MessageResponse,
@@ -47,9 +50,19 @@ from app.services.user_service import (
     save_refresh_token,
     update_last_login,
     update_password,
+    update_profile_picture,
 )
 
 auth_router = APIRouter()
+
+ALLOWED_IMAGE_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+MAX_PROFILE_IMAGE_SIZE = 5 * 1024 * 1024
+UPLOAD_DIR = Path(__file__).resolve().parents[3] / "uploads" / "profile_pictures"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -105,6 +118,28 @@ def _extract_repository_url(metadata: dict | None) -> Optional[str]:
             return value.strip()
 
     return None
+
+
+def _remove_old_profile_image_if_local(profile_picture: Optional[str]) -> None:
+    if not profile_picture:
+        return
+
+    uploads_prefix = "/uploads/profile_pictures/"
+    if uploads_prefix not in profile_picture:
+        return
+
+    filename = profile_picture.rsplit(uploads_prefix, 1)[-1].strip()
+    if not filename:
+        return
+
+    candidate = (UPLOAD_DIR / filename).resolve()
+    try:
+        candidate.relative_to(UPLOAD_DIR.resolve())
+    except ValueError:
+        return
+
+    if candidate.is_file():
+        candidate.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +212,7 @@ async def login(
     user = await get_user_by_email(db, body.email)
 
     # Constant-time: always verify even if user doesn't exist (dummy hash)
-    _dummy = "$2b$12$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    _dummy = "$2b$12$18fY35RWBv47Qx7s7wfH6u4FejNXDfcVsYIKm7lcAMiJmqQZD/Ire"
     password_ok = verify_password(body.password, user.password_hash if user else _dummy)
 
     if not user or not password_ok or not user.is_active or not user.is_verified:
@@ -191,7 +226,15 @@ async def login(
 
     access_token = create_access_token(user.id, user.role.value if hasattr(user.role, 'value') else user.role)
     raw_refresh, hashed_refresh = generate_refresh_token()
-    await save_refresh_token(db, user.id, hashed_refresh)
+    session_id = secrets.token_urlsafe(32)
+    await save_refresh_token(
+        db,
+        user.id,
+        hashed_refresh,
+        session_id,
+        user_agent=request.headers.get("user-agent"),
+        ip_address=client_ip,
+    )
 
     _set_refresh_cookie(response, raw_refresh)
 
@@ -235,7 +278,14 @@ async def refresh_token(
     await revoke_refresh_token(db, rt)
     new_access = create_access_token(user.id, user.role.value if hasattr(user.role, 'value') else user.role)
     raw_new, hashed_new = generate_refresh_token()
-    await save_refresh_token(db, user.id, hashed_new)
+    await save_refresh_token(
+        db,
+        user.id,
+        hashed_new,
+        rt.session_id,
+        user_agent=rt.user_agent,
+        ip_address=rt.ip_address,
+    )
 
     _set_refresh_cookie(response, raw_new)
 
@@ -330,6 +380,76 @@ async def reset_password(
 
 @auth_router.get("/api/users/me", response_model=UserProfile)
 async def get_me(current_user: CurrentUser) -> UserProfile:
+    return UserProfile.model_validate(current_user)
+
+
+@auth_router.post("/api/users/me/change-password", response_model=MessageResponse)
+async def change_password(
+    body: ChangePasswordRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    if not verify_password(body.current_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+
+    if verify_password(body.new_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from current password",
+        )
+
+    await update_password(db, current_user, body.new_password)
+
+    return MessageResponse(message="Password updated successfully")
+
+
+@auth_router.post("/api/users/me/profile-picture", response_model=UserProfile)
+async def upload_profile_picture(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+) -> UserProfile:
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported image format. Use JPG, PNG, WEBP, or GIF.",
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Image file is empty")
+
+    if len(content) > MAX_PROFILE_IMAGE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Image is too large. Maximum size is 5 MB.",
+        )
+
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    extension = ALLOWED_IMAGE_TYPES[file.content_type]
+    filename = f"{current_user.id}_{secrets.token_urlsafe(8)}{extension}"
+    saved_path = UPLOAD_DIR / filename
+    saved_path.write_bytes(content)
+
+    _remove_old_profile_image_if_local(current_user.profile_picture)
+
+    public_path = f"/uploads/profile_pictures/{filename}"
+    public_url = f"{settings.API_BASE_URL.rstrip('/')}{public_path}"
+    await update_profile_picture(db, current_user, public_url)
+
+    return UserProfile.model_validate(current_user)
+
+
+@auth_router.delete("/api/users/me/profile-picture", response_model=UserProfile)
+async def remove_profile_picture(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> UserProfile:
+    _remove_old_profile_image_if_local(current_user.profile_picture)
+    await update_profile_picture(db, current_user, None)
     return UserProfile.model_validate(current_user)
 
 

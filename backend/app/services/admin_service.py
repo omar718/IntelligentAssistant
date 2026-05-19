@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -377,7 +377,18 @@ async def get_analytics(
         InstallPoint(date=str(row.d), success=int(row.success or 0), failed=int(row.failed or 0))
         for row in installs_rows
     ]
-    dau = [DauPoint(date=str(row.d), active_users=int(row.active_users or 0)) for row in dau_rows]
+    
+    # Build DAU data with all dates filled in (including missing dates with 0 values)
+    dau_dict = {str(row.d): int(row.active_users or 0) for row in dau_rows}
+    
+    # Generate all dates from date_from to date_to
+    current_date = date_from
+    dau = []
+    while current_date <= date_to:
+        date_str = str(current_date)
+        active_users = dau_dict.get(date_str, 0)
+        dau.append(DauPoint(date=date_str, active_users=active_users))
+        current_date += timedelta(days=1)
 
     stack_distribution = []
     for row in stack_rows:

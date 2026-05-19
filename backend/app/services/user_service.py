@@ -54,6 +54,12 @@ async def update_last_login(db: AsyncSession, user: User) -> None:
 
 async def update_password(db: AsyncSession, user: User, new_plain_password: str) -> None:
     user.password_hash = hash_password(new_plain_password)
+    user.password_last_changed = datetime.now(timezone.utc)
+    await db.flush()
+
+
+async def update_profile_picture(db: AsyncSession, user: User, profile_picture: str | None) -> None:
+    user.profile_picture = profile_picture
     await db.flush()
 
 
@@ -62,12 +68,23 @@ async def update_password(db: AsyncSession, user: User, new_plain_password: str)
 # ---------------------------------------------------------------------------
 
 async def save_refresh_token(
-    db: AsyncSession, user_id: str, token_hash: str
+    db: AsyncSession,
+    user_id: str,
+    token_hash: str,
+    session_id: str,
+    user_agent: str | None = None,
+    ip_address: str | None = None,
 ) -> RefreshToken:
+    now = datetime.now(timezone.utc)
     rt = RefreshToken(
         token_hash=token_hash,
+        session_id=session_id,
         user_id=user_id,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_TTL_DAYS),
+        user_agent=user_agent,
+        ip_address=ip_address,
+        last_activity=now,
+        is_active=True,
+        expires_at=now + timedelta(days=settings.REFRESH_TOKEN_TTL_DAYS),
         revoked=False,
     )
     db.add(rt)
@@ -86,6 +103,7 @@ async def get_refresh_token(
 
 async def revoke_refresh_token(db: AsyncSession, token: RefreshToken) -> None:
     token.revoked = True
+    token.is_active = False
     await db.flush()
 
 
@@ -99,7 +117,95 @@ async def revoke_all_user_refresh_tokens(db: AsyncSession, user_id: str) -> None
     )
     for token in result.scalars().all():
         token.revoked = True
+        token.is_active = False
     await db.flush()
+
+
+async def update_session_activity(db: AsyncSession, user_id: str, session_id: str) -> bool:
+    if not session_id:
+        return True
+
+    result = await db.execute(
+        select(RefreshToken)
+        .where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.session_id == session_id,
+            RefreshToken.revoked == False,  # noqa: E712
+        )
+        .order_by(RefreshToken.created_at.desc())
+        .limit(1)
+    )
+    token = result.scalar_one_or_none()
+    if token is None:
+        return False
+
+    token.last_activity = datetime.now(timezone.utc)
+    token.is_active = True
+    await db.flush()
+    return True
+
+
+async def list_active_sessions(db: AsyncSession, user_id: str) -> list[RefreshToken]:
+    result = await db.execute(
+        select(RefreshToken)
+        .where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.revoked == False,  # noqa: E712
+            RefreshToken.is_active == True,  # noqa: E712
+        )
+        .order_by(RefreshToken.last_activity.desc(), RefreshToken.created_at.desc())
+    )
+
+    sessions: list[RefreshToken] = []
+    seen: set[str] = set()
+    for token in result.scalars().all():
+        if token.session_id in seen:
+            continue
+        seen.add(token.session_id)
+        sessions.append(token)
+    return sessions
+
+
+async def deactivate_other_sessions(db: AsyncSession, user_id: str, current_session_id: str) -> int:
+    result = await db.execute(
+        select(RefreshToken).where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.revoked == False,  # noqa: E712
+            RefreshToken.is_active == True,  # noqa: E712
+            RefreshToken.session_id != current_session_id,
+        )
+    )
+
+    count = 0
+    for token in result.scalars().all():
+        token.revoked = True
+        token.is_active = False
+        count += 1
+
+    await db.flush()
+    return count
+
+
+async def deactivate_session(db: AsyncSession, user_id: str, session_id: str) -> bool:
+    result = await db.execute(
+        select(RefreshToken).where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.session_id == session_id,
+            RefreshToken.revoked == False,  # noqa: E712
+            RefreshToken.is_active == True,  # noqa: E712
+        )
+    )
+
+    tokens = result.scalars().all()
+    if not tokens:
+        return False
+
+    for token in tokens:
+        token.revoked = True
+        token.is_active = False
+
+    await db.flush()
+    return True
 
 
 async def revoke_token_family(db: AsyncSession, user_id: str) -> None:

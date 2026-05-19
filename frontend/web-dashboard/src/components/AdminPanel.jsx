@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { userApi, healthApi, adminApi } from '../api/client'
 import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import TechBadge from './TechBadge'
@@ -50,10 +51,25 @@ function StatCard({ label, value, icon, accent }) {
 }
 
 // ── DAU Chart ──────────────────────────────────────────────────────────────
-function DauChart({ data, selectedDate, onDateClick }) {
+function DauChart({ data, selectedDate, onDateClick, theme }) {
+  const { t } = useTranslation()
   const handleClick = (dataPoint) => {
     onDateClick(dataPoint.date)
   }
+
+  const isLight = theme === 'light'
+  const cardBg = '#ffffff'
+  const cardBorder = isLight ? 'rgba(19, 35, 61, 0.14)' : 'rgba(74, 222, 128, 0.25)'
+  const headingColor = isLight ? '#13233d' : '#1a1a1a'
+
+  // Filter out future dates (only show today and past)
+  const today = new Date().toISOString().split('T')[0]
+  const filteredData = data ? data.filter(point => point.date <= today) : []
+
+  // Theme-aware colors for chart elements
+  const gridStroke = '#ddd'
+  const axisStroke = '#666'
+  const legendColor = '#333'
 
   // Custom dot component for highlighting selected date
   const CustomDot = (props) => {
@@ -76,31 +92,42 @@ function DauChart({ data, selectedDate, onDateClick }) {
   }
 
   return (
-    <div className="admin-dau-chart-container">
-      <h3 className="admin-chart-title">Daily Active Users</h3>
-      {data && data.length > 0 ? (
+    <div
+      className="admin-dau-chart-container"
+      style={{
+        background: '#ffffff',
+        border: `1px solid ${cardBorder}`,
+        borderRadius: '12px',
+        padding: '1rem',
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column'
+      }}
+    >
+      <h3 className="admin-chart-title" style={{ color: headingColor, marginBottom: '0.75rem' }}>{t('admin.dailyActiveUsers')}</h3>
+      {filteredData && filteredData.length > 0 ? (
         <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={data} margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#444" />
+          <LineChart data={filteredData} margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
             <XAxis 
               dataKey="date" 
-              stroke="#999"
+              stroke={axisStroke}
               tick={{ fontSize: 12 }}
             />
             <YAxis 
-              stroke="#999"
+              stroke={axisStroke}
               tick={{ fontSize: 12 }}
             />
             <Tooltip 
               contentStyle={{
                 backgroundColor: '#1a1a1a',
-                border: '1px solid #444',
+                border: `1px solid ${gridStroke}`,
                 borderRadius: '6px',
                 color: '#fff'
               }}
-              formatter={(value) => [value, 'Active Users']}
+              formatter={(value) => [value, t('admin.activeUsers')]}
             />
-            <Legend wrapperStyle={{ color: '#999' }} />
+            <Legend wrapperStyle={{ color: legendColor }} />
             <Line 
               type="monotone" 
               dataKey="active_users" 
@@ -112,18 +139,16 @@ function DauChart({ data, selectedDate, onDateClick }) {
           </LineChart>
         </ResponsiveContainer>
       ) : (
-        <p className="admin-loading" style={{ padding: '2rem', textAlign: 'center' }}>
-          No DAU data available
-        </p>
+          <p className="admin-loading" style={{ padding: '2rem', textAlign: 'center' }}>{t('admin.noDauData')}</p>
       )}
       {selectedDate && (
         <div className="admin-chart-filter-info">
           <p>
-            Selected date: <strong>{selectedDate}</strong>
+            {t('admin.selectedDate')}: <strong>{selectedDate}</strong>
             <button
               className="admin-chart-clear-btn"
               onClick={() => onDateClick(null)}
-              title="Clear filter"
+              title={t('admin.clearFilter')}
             >
               ✕
             </button>
@@ -135,24 +160,52 @@ function DauChart({ data, selectedDate, onDateClick }) {
 }
 
 // ── Stack Distribution Chart ───────────────────────────────────────────────────
-function StackDistributionChart({ data }) {
+function StackDistributionChart({ data, theme }) {
+  const { t } = useTranslation()
   // Process data: top 6 stacks + "Other" for rest
   const COLORS = ['#4ade80', '#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#6b7280']
+  const isLight = theme === 'light'
+  const cardBg = isLight ? 'rgba(19, 35, 61, 0.05)' : 'rgba(255, 255, 255, 0.03)'
+  const cardBorder = isLight ? 'rgba(19, 35, 61, 0.14)' : 'rgba(255, 255, 255, 0.07)'
+  const headingColor = isLight ? '#13233d' : '#e8e8f0'
+  const bodyTextColor = isLight ? 'rgba(19, 35, 61, 0.85)' : '#e8e8f0'
+  const mutedTextColor = isLight ? 'rgba(19, 35, 61, 0.62)' : '#999'
+  const labelColor = isLight ? '#13233d' : '#cbd5e1'
+  const labelLineColor = isLight ? 'rgba(19, 35, 61, 0.48)' : 'rgba(203, 213, 225, 0.6)'
+
+  const renderPieLabel = ({ cx, cy, midAngle, outerRadius, stack }) => {
+    const RADIAN = Math.PI / 180
+    const radius = outerRadius + 16
+    const x = cx + radius * Math.cos(-midAngle * RADIAN)
+    const y = cy + radius * Math.sin(-midAngle * RADIAN)
+
+    return (
+      <text
+        x={x}
+        y={y}
+        fill={labelColor}
+        textAnchor={x > cx ? 'start' : 'end'}
+        dominantBaseline="central"
+        fontSize={12}
+        fontWeight={600}
+      >
+        {stack}
+      </text>
+    )
+  }
   
   if (!data || data.length === 0) {
     return (
       <div style={{ 
-        background: 'rgba(255, 255, 255, 0.03)',
-        border: '1px solid rgba(255, 255, 255, 0.07)',
+        background: cardBg,
+        border: `1px solid ${cardBorder}`,
         borderRadius: '12px',
         padding: '1.5rem',
         margin: '1rem 0',
         textAlign: 'center'
       }}>
-        <h3 style={{ color: '#e8e8f0', marginBottom: '1rem', fontSize: '1.1rem', fontWeight: 600 }}>
-          Stack Distribution
-        </h3>
-        <p style={{ color: '#999', padding: '2rem' }}>No stack data available</p>
+          <h3 style={{ color: headingColor, marginBottom: '1rem', fontSize: '1.1rem', fontWeight: 600 }}>{t('admin.stackDistribution')}</h3>
+        <p style={{ color: mutedTextColor, padding: '2rem' }}>{t('admin.noStackData')}</p>
       </div>
     )
   }
@@ -189,20 +242,20 @@ function StackDistributionChart({ data }) {
 
   return (
     <div style={{ 
-      background: 'rgba(255, 255, 255, 0.03)',
-      border: '1px solid rgba(255, 255, 255, 0.07)',
+      background: cardBg,
+      border: `1px solid ${cardBorder}`,
       borderRadius: '12px',
       padding: '1rem',
       height: '100%',
       display: 'flex',
       flexDirection: 'column'
     }}>
-      <h3 style={{ color: '#e8e8f0', marginBottom: '0.75rem', fontSize: '1rem', fontWeight: 600 }}>
-        Stack Distribution
+      <h3 style={{ color: headingColor, marginBottom: '0.75rem', fontSize: '1rem', fontWeight: 600 }}>
+        {t('admin.stackDistribution')}
       </h3>
       
       <ResponsiveContainer width="100%" height={250}>
-        <PieChart>
+        <PieChart margin={{ top: 6, right: 22, left: 22, bottom: 6 }}>
           <Pie
             data={chartData}
             cx="50%"
@@ -211,7 +264,9 @@ function StackDistributionChart({ data }) {
             outerRadius={90}
             paddingAngle={2}
             dataKey="count"
-            label={({ stack, percentage }) => `${stack}`}
+            minAngle={4}
+            labelLine={{ stroke: labelLineColor, strokeWidth: 1 }}
+            label={renderPieLabel}
           >
             {chartData.map((entry, index) => (
               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -228,7 +283,7 @@ function StackDistributionChart({ data }) {
             alignItems: 'center',
             gap: '0.5rem',
             padding: '0.375rem',
-            background: 'rgba(255, 255, 255, 0.02)',
+            background: isLight ? 'rgba(19, 35, 61, 0.03)' : 'rgba(255, 255, 255, 0.02)',
             borderRadius: '4px',
             fontSize: '0.8rem'
           }}>
@@ -238,7 +293,7 @@ function StackDistributionChart({ data }) {
               borderRadius: '2px',
               background: COLORS[idx % COLORS.length]
             }} />
-            <span style={{ color: '#e8e8f0' }}>
+            <span style={{ color: bodyTextColor }}>
               {item.stack}: <strong style={{ color: '#4ade80' }}>{item.count}</strong> ({item.percentage.toFixed(1)}%)
             </span>
           </div>
@@ -250,14 +305,24 @@ function StackDistributionChart({ data }) {
 
 // ── Health indicator ───────────────────────────────────────────────────────────
 function HealthStatus({ health, loading }) {
-  if (loading) return <div className="admin-health-badge loading">Checking...</div>
-  if (!health)  return <div className="admin-health-badge offline">Offline</div>
-  return <div className="admin-health-badge online">Online</div>
+  const { t } = useTranslation()
+  if (loading) return <div className="admin-health-badge loading">{t('admin.checking')}</div>
+  if (!health)  return <div className="admin-health-badge offline">{t('admin.offline')}</div>
+  return <div className="admin-health-badge online">{t('admin.online')}</div>
 }
 
 // ── Delete confirm modal ───────────────────────────────────────────────────────
 function DeleteUserModal({ user, onCancel, onConfirm }) {
-  const [reason, setReason] = useState('')
+  const { t } = useTranslation()
+  const [selectedReason, setSelectedReason] = useState('')
+
+  const deleteReasons = [
+    { id: 'no-response', label: 'No response from the user' },
+    { id: 'issue-unresolved', label: 'Issue unresolved' },
+    { id: 'escalated', label: 'Escalated from deactivation' }
+  ]
+
+  const isReasonValid = selectedReason !== ''
 
   return (
     <div className="delete-modal-overlay" onClick={onCancel}>
@@ -267,33 +332,42 @@ function DeleteUserModal({ user, onCancel, onConfirm }) {
             <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
           </svg>
         </div>
-        <h2 className="delete-modal-title">Delete user?</h2>
+        <h2 className="delete-modal-title">{t('admin.deleteUserQuestion')}</h2>
         <p className="delete-modal-message">
-          Are you sure you want to delete <strong>{user.name}</strong>?<br/>
-          This action cannot be undone.
+          {t('admin.deleteUserMessage', { name: user.name })}
         </p>
         
         <div className="delete-modal-reason-section">
           <label className="delete-modal-reason-label">
-            Reason for deletion <span className="delete-modal-required">*</span>
+            {t('admin.reasonForDeletion')} <span className="delete-modal-required">*</span>
           </label>
-          <textarea
-            className="delete-modal-reason-input"
-            placeholder="Enter reason for deleting this user..."
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            rows="3"
-          />
+          <div className="delete-modal-checkboxes">
+            {deleteReasons.map((reason) => (
+              <div key={reason.id} className="checkbox-item">
+                <label className="checkbox-label">
+                  <input
+                    type="radio"
+                    name="delete-reason"
+                    value={reason.id}
+                    checked={selectedReason === reason.id}
+                    onChange={(e) => setSelectedReason(e.target.value)}
+                    className="checkbox-input"
+                  />
+                  <span className="checkbox-text">{reason.label}</span>
+                </label>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="delete-modal-actions">
-          <button className="delete-modal-btn cancel" onClick={onCancel}>Cancel</button>
+          <button className="delete-modal-btn cancel" onClick={onCancel}>{t('admin.cancel')}</button>
           <button 
             className="delete-modal-btn confirm" 
-            onClick={() => onConfirm(user.id, reason)}
-            disabled={!reason.trim()}
+            onClick={() => onConfirm(user.id, selectedReason)}
+            disabled={!isReasonValid}
           >
-            Delete
+            {t('admin.delete')}
           </button>
         </div>
       </div>
@@ -303,8 +377,21 @@ function DeleteUserModal({ user, onCancel, onConfirm }) {
 
 // ── Toggle user status modal ───────────────────────────────────────────────────
 function ToggleUserStatusModal({ user, onCancel, onConfirm }) {
-  const [reason, setReason] = useState('')
+  const { t } = useTranslation()
+  const [selectedReason, setSelectedReason] = useState('')
+  const [customReason, setCustomReason] = useState('')
   const isActivating = !user.is_active
+
+  const deactivationReasons = [
+    { id: 'suspicious', label: 'Suspicious activity' },
+    { id: 'required', label: 'User required deactivation' },
+    { id: 'inactivity', label: 'Inactivity for a long period' },
+    { id: 'other', label: 'Other' }
+  ]
+
+  const finalReason = selectedReason === 'other' ? customReason : selectedReason
+  const isReasonValid = !isActivating ? (selectedReason && (selectedReason !== 'other' || customReason.trim())) : true
+
   return (
     <div className="delete-modal-overlay" onClick={onCancel}>
       <div className="delete-modal-card" onClick={(e) => e.stopPropagation()}>
@@ -318,36 +405,57 @@ function ToggleUserStatusModal({ user, onCancel, onConfirm }) {
           </svg>
         </div>
         <h2 className="delete-modal-title">
-          {isActivating ? 'Activate user?' : 'Deactivate user?'}
+          {isActivating ? t('admin.activateUserQuestion') : t('admin.deactivateUserQuestion')}
         </h2>
         <p className="delete-modal-message">
-          Are you sure you want to <strong>{isActivating ? 'activate' : 'deactivate'}</strong> <strong>{user.name}</strong>?<br/>
-          {isActivating ? 'They will be able to access their account.' : 'They will not be able to access their account.'}
+          {isActivating ? t('admin.activateUserMessage', { name: user.name }) : t('admin.deactivateUserMessage', { name: user.name })}
         </p>
 
         {!isActivating && (
           <div className="delete-modal-reason-section">
             <label className="delete-modal-reason-label">
-              Reason for deactivation <span className="delete-modal-required">*</span>
+              {t('admin.reasonForDeactivation')} <span className="delete-modal-required">*</span>
             </label>
-            <textarea
-              className="delete-modal-reason-input"
-              placeholder="Enter reason for deactivating this user..."
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows="3"
-            />
+            <div className="delete-modal-checkboxes">
+              {deactivationReasons.map((reason) => (
+                <div key={reason.id} className="checkbox-item">
+                  <label className="checkbox-label">
+                    <input
+                      type="radio"
+                      name="deactivation-reason"
+                      value={reason.id}
+                      checked={selectedReason === reason.id}
+                      onChange={(e) => {
+                        setSelectedReason(e.target.value)
+                        if (e.target.value !== 'other') setCustomReason('')
+                      }}
+                      className="checkbox-input"
+                    />
+                    <span className="checkbox-text">{reason.label}</span>
+                  </label>
+                </div>
+              ))}
+            </div>
+            {selectedReason === 'other' && (
+              <textarea
+                className="delete-modal-reason-input"
+                placeholder={t('admin.deactivationReasonPlaceholder')}
+                value={customReason}
+                onChange={(e) => setCustomReason(e.target.value)}
+                rows="3"
+              />
+            )}
           </div>
         )}
 
         <div className="delete-modal-actions">
-          <button className="delete-modal-btn cancel" onClick={onCancel}>Cancel</button>
+          <button className="delete-modal-btn cancel" onClick={onCancel}>{t('admin.cancel')}</button>
           <button 
             className={`delete-modal-btn confirm ${isActivating ? 'activate' : 'deactivate'}`} 
-            onClick={() => onConfirm(user.id, reason)}
-            disabled={!isActivating && !reason.trim()}
+            onClick={() => onConfirm(user.id, finalReason)}
+            disabled={!isReasonValid}
           >
-            {isActivating ? 'Activate' : 'Deactivate'}
+            {isActivating ? t('admin.activate') : t('admin.deactivate')}
           </button>
         </div>
       </div>
@@ -356,7 +464,8 @@ function ToggleUserStatusModal({ user, onCancel, onConfirm }) {
 }
 
 // ── Main Admin Panel ───────────────────────────────────────────────────────────
-function AdminPanel({ onBack }) {
+function AdminPanel({ onBack, theme, onToggleTheme }) {
+  const { t } = useTranslation()
   const [projects, setProjects]   = useState([])
   const [stats, setStats]         = useState(null)
   const [health, setHealth]       = useState(null)
@@ -371,8 +480,10 @@ function AdminPanel({ onBack }) {
   const [statusFilter, setStatusFilter] = useState('all')
   const [filteredUsers, setFilteredUsers] = useState([])
   const [currentPage, setCurrentPage] = useState(1)
+  const [currentProjectsPage, setCurrentProjectsPage] = useState(1)
 
   const USERS_PER_PAGE = 10
+  const PROJECTS_PER_PAGE = 10
 
   const [loadingProjects, setLoadingProjects] = useState(true)
   const [loadingStats, setLoadingStats]       = useState(true)
@@ -384,6 +495,66 @@ function AdminPanel({ onBack }) {
   // ── Toast helper ─────────────────────────────────────────────────────────
   const showToast = (message, type = 'success') => {
     setToast({ message, type })
+  }
+
+  const fetchUserStats = () => {
+    setLoadingStats(true)
+    console.log('[AdminPanel] Fetching user stats from API...')
+    return userApi.getMyStats()
+      .then(data => {
+        console.log('[AdminPanel] ============ USER STATS RESPONSE ============')
+        console.log('[AdminPanel] Stats:', JSON.stringify(data, null, 2))
+        setStats(data)
+      })
+      .catch((err) => {
+        console.error('[AdminPanel] Failed to fetch stats:', err?.message)
+        setStats(null)
+      })
+      .finally(() => setLoadingStats(false))
+  }
+
+  const fetchHealthStatus = () => {
+    setLoadingHealth(true)
+    return healthApi.check()
+      .then(data => setHealth(data))
+      .catch(() => setHealth(null))
+      .finally(() => setLoadingHealth(false))
+  }
+
+  const fetchAnalytics = () => {
+    setLoadingAnalytics(true)
+    console.log('[AdminPanel] Fetching analytics from API...')
+    const today = new Date()
+    const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000)
+    const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000)
+    const dateFrom = thirtyDaysAgo.toISOString().split('T')[0]
+    const dateTo = tomorrow.toISOString().split('T')[0]
+
+    return adminApi.getAnalytics(dateFrom, dateTo)
+      .then(data => {
+        console.log('[AdminPanel] ============ ANALYTICS RESPONSE ============')
+        console.log('[AdminPanel] Full Analytics:', JSON.stringify(data, null, 2))
+        console.log(`[AdminPanel] DAU points: ${data.dau?.length || 0}`)
+        setAnalytics(data)
+      })
+      .catch((err) => {
+        console.error('[AdminPanel] Failed to fetch analytics:', {
+          status: err?.response?.status,
+          data: err?.response?.data,
+          message: err?.message
+        })
+        setAnalytics(null)
+      })
+      .finally(() => setLoadingAnalytics(false))
+  }
+
+  const handleGlobalRefresh = () => {
+    console.log('[AdminPanel] Global refresh triggered')
+    fetchProjects()
+    fetchUsers()
+    fetchUserStats()
+    fetchHealthStatus()
+    fetchAnalytics()
   }
 
   // ── Fetch projects from API ─────────────────────────────────────────────────────
@@ -415,7 +586,7 @@ function AdminPanel({ onBack }) {
           data: err?.response?.data,
           message: err?.message
         })
-        showToast('Failed to load projects', 'error')
+        showToast(t('admin.failedToLoadProjects'), 'error')
         setProjects([])
       })
       .finally(() => setLoadingProjects(false))
@@ -468,7 +639,7 @@ function AdminPanel({ onBack }) {
           data: err?.response?.data,
           message: err?.message
         })
-        showToast('Failed to load users', 'error')
+        showToast(t('admin.failedToLoadUsers'), 'error')
         setUsers([])
         setFilteredUsers([])
       })
@@ -480,48 +651,10 @@ function AdminPanel({ onBack }) {
     // Fetch projects
     fetchProjects()
 
-    // Fetch current user stats
-    console.log('[AdminPanel] Fetching user stats from API...')
-    userApi.getMyStats()
-      .then(data => {
-        console.log('[AdminPanel] ============ USER STATS RESPONSE ============')
-        console.log('[AdminPanel] Stats:', JSON.stringify(data, null, 2))
-        setStats(data)
-      })
-      .catch((err) => {
-        console.error('[AdminPanel] Failed to fetch stats:', err?.message)
-        setStats(null)
-      })
-      .finally(() => setLoadingStats(false))
-
-    healthApi.check()
-      .then(data => setHealth(data))
-      .catch(() => setHealth(null))
-      .finally(() => setLoadingHealth(false))
-
-    // Fetch analytics
-    console.log('[AdminPanel] Fetching analytics from API...')
-    const today = new Date()
-    const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000)
-    const dateFrom = thirtyDaysAgo.toISOString().split('T')[0]
-    const dateTo = today.toISOString().split('T')[0]
-    
-    adminApi.getAnalytics(dateFrom, dateTo)
-      .then(data => {
-        console.log('[AdminPanel] ============ ANALYTICS RESPONSE ============')
-        console.log('[AdminPanel] Full Analytics:', JSON.stringify(data, null, 2))
-        console.log(`[AdminPanel] DAU points: ${data.dau?.length || 0}`)
-        setAnalytics(data)
-      })
-      .catch((err) => {
-        console.error('[AdminPanel] Failed to fetch analytics:', {
-          status: err?.response?.status,
-          data: err?.response?.data,
-          message: err?.message
-        })
-        setAnalytics(null)
-      })
-      .finally(() => setLoadingAnalytics(false))
+    // Fetch current user stats/health/analytics
+    fetchUserStats()
+    fetchHealthStatus()
+    fetchAnalytics()
 
     // Fetch real users
     fetchUsers()
@@ -532,11 +665,7 @@ function AdminPanel({ onBack }) {
     const timer = setTimeout(() => {
       let filtered = users
 
-      // Filter by email
       const query = emailSearch.toLowerCase().trim()
-      if (query) {
-        filtered = filtered.filter(u => u.email.toLowerCase().includes(query))
-      }
 
       // Filter by role
       if (roleFilter !== 'all') {
@@ -547,6 +676,23 @@ function AdminPanel({ onBack }) {
       if (statusFilter !== 'all') {
         const isActive = statusFilter === 'active'
         filtered = filtered.filter(u => u.is_active === isActive)
+      }
+
+      // Keep the same list visible, but move searched email matches to the top.
+      if (query) {
+        const matched = []
+        const unmatched = []
+
+        filtered.forEach((u) => {
+          const email = (u.email || '').toLowerCase()
+          if (email.includes(query)) {
+            matched.push(u)
+          } else {
+            unmatched.push(u)
+          }
+        })
+
+        filtered = [...matched, ...unmatched]
       }
 
       setFilteredUsers(filtered)
@@ -560,11 +706,26 @@ function AdminPanel({ onBack }) {
     setCurrentPage(1)
   }, [emailSearch, roleFilter, statusFilter])
 
+  useEffect(() => {
+    setCurrentProjectsPage(1)
+  }, [projects.length])
+
   // ── Calculate pagination ─────────────────────────────────────────────────────
   const totalPages = Math.ceil(filteredUsers.length / USERS_PER_PAGE)
   const startIndex = (currentPage - 1) * USERS_PER_PAGE
   const endIndex = startIndex + USERS_PER_PAGE
   const usersOnCurrentPage = filteredUsers.slice(startIndex, endIndex)
+  const totalProjectPages = Math.ceil(projects.length / PROJECTS_PER_PAGE)
+  const projectStartIndex = (currentProjectsPage - 1) * PROJECTS_PER_PAGE
+  const projectEndIndex = projectStartIndex + PROJECTS_PER_PAGE
+  const projectsOnCurrentPage = projects.slice(projectStartIndex, projectEndIndex)
+  const normalizedEmailQuery = emailSearch.toLowerCase().trim()
+  const emailMatchCount = normalizedEmailQuery
+    ? filteredUsers.reduce((count, user) => {
+        const email = (user.email || '').toLowerCase()
+        return count + (email.includes(normalizedEmailQuery) ? 1 : 0)
+      }, 0)
+    : 0
 
   // ── User actions ─────────────────────────────────────────────────────────────
 
@@ -578,7 +739,7 @@ function AdminPanel({ onBack }) {
     try {
       const user = users.find(u => u.id === id)
       if (!user) {
-        showToast('User not found', 'error')
+        showToast(t('admin.userNotFound'), 'error')
         return
       }
       
@@ -593,13 +754,10 @@ function AdminPanel({ onBack }) {
       // Refresh the list after successful update
       await fetchUsers()
       
-      showToast(
-        `User ${userName} ${isActivating ? 'activated' : 'deactivated'} successfully`,
-        'success'
-      )
+      showToast(t('admin.userStatusUpdated', { name: userName, status: isActivating ? t('admin.activated') : t('admin.deactivated') }), 'success')
     } catch (err) {
       console.error('Toggle status error:', err)
-      showToast('Failed to update user status', 'error')
+      showToast(t('admin.failedToUpdateUserStatus'), 'error')
     } finally {
       setUserToToggleStatus(null)
     }
@@ -610,7 +768,7 @@ function AdminPanel({ onBack }) {
     try {
       const user = users.find(u => u.id === id)
       if (!user) {
-        showToast('User not found', 'error')
+        showToast(t('admin.userNotFound'), 'error')
         return
       }
       
@@ -619,10 +777,10 @@ function AdminPanel({ onBack }) {
       await adminApi.deleteUser(id, reason)
       await fetchUsers()
       
-      showToast(`User ${userName} deleted successfully`, 'success')
+      showToast(t('admin.userDeletedSuccessfully', { name: userName }), 'success')
     } catch (err) {
       console.error('Delete user error:', err)
-      showToast('Failed to delete user', 'error')
+      showToast(t('admin.failedToDeleteUser'), 'error')
     } finally {
       setUserToDelete(null)
     }
@@ -637,19 +795,94 @@ function AdminPanel({ onBack }) {
           <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
           </svg>
-          Back
+          {t('app.back')}
         </button>
         <Logo />
         <div className="admin-header-right">
-          <span className="admin-badge">Admin</span>
-          <HealthStatus health={health} loading={loadingHealth} />
+          <button
+            className="header-theme-toggle"
+            type="button"
+            onClick={onToggleTheme}
+            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          >
+            <span className="header-theme-toggle-icon" aria-hidden="true">
+              <svg viewBox="0 0 72 24" fill="none">
+                {/* Background circle (the toggle knob) */}
+                <circle
+                  cx={theme === 'light' ? 52 : 20}
+                  cy="12"
+                  r="8"
+                  fill="var(--toggle-bg)"
+                  opacity="0.95"
+                  style={{
+                    transition: 'all 0.5s cubic-bezier(0.4, 0, 0.2, 1)'
+                  }}
+                />
+
+                {/* Sliding icon container */}
+                <g
+                  style={{
+                    transform: `translate(${theme === 'light' ? 52 : 20}px, 12px)`,
+                    transition: 'transform 0.5s cubic-bezier(0.4, 0, 0.2, 1)'
+                  }}
+                >
+                  {/* 🌞 Sun */}
+                  <g
+                    style={{
+                      opacity: theme === 'light' ? 1 : 0,
+                      transform: `scale(${theme === 'light' ? 1 : 0.6}) rotate(${theme === 'light' ? 0 : 90}deg)`,
+                      transformOrigin: 'center',
+                      transition: 'all 0.5s ease'
+                    }}
+                  >
+                    <circle cx="0" cy="0" r="4.3" fill="currentColor" />
+                    <line x1="0" y1="-7" x2="0" y2="-5" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+                    <line x1="0" y1="7" x2="0" y2="5" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+                    <line x1="-7" y1="0" x2="-5" y2="0" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+                    <line x1="7" y1="0" x2="5" y2="0" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+                  </g>
+
+                  {/* 🌙 Moon */}
+                  <g
+                    style={{
+                      opacity: theme === 'dark' ? 1 : 0,
+                      transform: `scale(${theme === 'dark' ? 1 : 0.6}) rotate(${theme === 'dark' ? 0 : -90}deg)`,
+                      transformOrigin: 'center',
+                      transition: 'all 0.5s ease'
+                    }}
+                  >
+                    <path
+                      d="M 0 -7 A 7 7 0 1 0 0 7 A 4.5 7 0 1 1 0 -7 Z"
+                      fill="currentColor"
+                    />
+                  </g>
+                </g>
+              </svg>
+            </span>
+            <span className="header-theme-toggle-label">{theme === 'dark' ? t('app.lightMode') : t('app.darkMode')}</span>
+          </button>
+          <span className="admin-badge">{t('admin.badge')}</span>
         </div>
       </header>
 
       {/* ── Page title ── */}
       <div className="admin-title-row">
-        <h1 className="admin-title">Admin Panel</h1>
-        <p className="admin-subtitle">Monitor projects, users, stats and system health</p>
+        <h1 className="admin-title">{t('admin.title')}</h1>
+        <p className="admin-subtitle">{t('admin.subtitle')}</p>
+      </div>
+
+      <div className="admin-global-refresh-row">
+        <button
+          className="admin-refresh-btn admin-refresh-btn--global"
+          onClick={handleGlobalRefresh}
+          title={t('admin.refreshAll')}
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+          </svg>
+          {t('admin.refresh')}
+        </button>
       </div>
 
       {/* ── Tabs ── */}
@@ -660,7 +893,7 @@ function AdminPanel({ onBack }) {
             className={`admin-tab ${activeTab === tab ? 'active' : ''}`}
             onClick={() => setActiveTab(tab)}
           >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {t(`admin.tabs.${tab}`)}
           </button>
         ))}
       </div>
@@ -671,39 +904,39 @@ function AdminPanel({ onBack }) {
         {/* OVERVIEW TAB */}
         {activeTab === 'overview' && (
           <div className="admin-section">
-            <h2 className="admin-section-title">Overview</h2>
+            <h2 className="admin-section-title">{t('admin.overview')}</h2>
             {loadingStats ? (
-              <p className="admin-loading">Loading stats...</p>
+              <p className="admin-loading">{t('admin.loadingStats')}</p>
             ) : (
               <>
                 <div className="admin-stats-grid">
                   <StatCard
-                    label="Total Projects"
+                    label={t('admin.totalProjects')}
                     value={projects.length}
                     accent="#4ade80"
                     icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8v8H3zm0 10h8v8H3zM13 3h8v8h-8zm0 10h8v8h-8z"/></svg>}
                   />
                   <StatCard
-                    label="Total Users"
+                    label={t('admin.totalUsers')}
                     value={users.length}
                     accent="#60a5fa"
                     icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>}
                   />
                   <StatCard
-                    label="Active Users"
+                    label={t('admin.activeUsers')}
                     value={users.filter(u => u.is_active).length}
                     accent="#f472b6"
                     icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>}
                   />
                   <StatCard
-                    label="Avg Projects / User"
+                    label={t('admin.avgProjectsPerUser')}
                     value={users.length > 0 ? (users.reduce((sum, u) => sum + u.install_count, 0) / users.length).toFixed(1) : 0}
                     accent="#fbbf24"
                     icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>}
                   />
                   <StatCard
-                    label="System Status"
-                    value={loadingHealth ? 'Checking...' : health ? 'Healthy' : 'Down'}
+                    label={t('admin.systemStatus')}
+                    value={loadingHealth ? t('admin.checking') : health ? t('admin.healthy') : t('admin.down')}
                     accent={health ? '#4ade80' : '#f87171'}
                     icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>}
                   />
@@ -711,9 +944,9 @@ function AdminPanel({ onBack }) {
 
                 {/* Health Section */}
                 <div style={{ marginTop: '2rem' }}>
-                  <h3 className="admin-section-title" style={{ marginBottom: '1rem' }}>System Health</h3>
+                  <h3 className="admin-section-title" style={{ marginBottom: '1rem' }}>{t('admin.systemHealth')}</h3>
                   {loadingHealth ? (
-                    <p className="admin-loading">Checking system health...</p>
+                    <p className="admin-loading">{t('admin.checkingSystemHealth')}</p>
                   ) : (
                     <div className="admin-health-panel">
                       <div className={`admin-health-status-card ${health ? 'online' : 'offline'}`}>
@@ -730,10 +963,10 @@ function AdminPanel({ onBack }) {
                         </div>
                         <div>
                           <div className="admin-health-status-title">
-                            {health ? 'All Systems Operational' : 'Backend Unreachable'}
+                            {health ? t('admin.allSystemsOperational') : t('admin.backendUnreachable')}
                           </div>
                           <div className="admin-health-status-sub">
-                            {health ? 'Backend is running normally' : 'Could not connect to the backend server'}
+                            {health ? t('admin.backendRunningNormally') : t('admin.couldNotConnectBackend')}
                           </div>
                         </div>
                       </div>
@@ -749,32 +982,17 @@ function AdminPanel({ onBack }) {
                         </div>
                       )}
 
-                      <button
-                        className="admin-refresh-btn"
-                        onClick={() => {
-                          setLoadingHealth(true)
-                          healthApi.check()
-                            .then(data => setHealth(data))
-                            .catch(() => setHealth(null))
-                            .finally(() => setLoadingHealth(false))
-                        }}
-                      >
-                        <svg viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-                        </svg>
-                        Refresh
-                      </button>
                     </div>
                   )}
                 </div>
 
                 {/* DAU Chart Section */}
                 <div style={{ marginTop: '2rem' }}>
-                  <h3 className="admin-section-title" style={{ marginBottom: '1rem' }}>Last 30 Days Analytics</h3>
+                  <h3 className="admin-section-title" style={{ marginBottom: '1rem' }}>{t('admin.last30DaysAnalytics')}</h3>
                   {loadingAnalytics ? (
-                    <p className="admin-loading">Loading analytics...</p>
+                    <p className="admin-loading">{t('admin.loadingAnalytics')}</p>
                   ) : !analytics ? (
-                    <p className="admin-loading" style={{ color: '#ef4444' }}>Failed to load analytics data</p>
+                    <p className="admin-loading" style={{ color: '#ef4444' }}>{t('admin.failedToLoadAnalytics')}</p>
                   ) : (
                     <div style={{ display: 'flex', gap: '1.5rem' }}>
                       {/* DAU Chart - 75% */}
@@ -787,18 +1005,19 @@ function AdminPanel({ onBack }) {
                               console.log('[AdminPanel] DAU date clicked:', date)
                               setSelectedDauDate(date)
                             }}
+                            theme={theme}
                           />
                         ) : (
-                          <p className="admin-loading">No DAU data available (dau: {analytics?.dau ? `${analytics.dau.length} items` : 'undefined'})</p>
+                          <p className="admin-loading">{t('admin.noDauDataWithCount', { count: analytics?.dau ? `${analytics.dau.length} items` : 'undefined' })}</p>
                         )}
                       </div>
 
                       {/* Stack Distribution Chart - 25% */}
                       <div style={{ flex: '0 0 25%' }}>
                         {analytics?.stack_distribution && analytics.stack_distribution.length > 0 ? (
-                          <StackDistributionChart data={analytics.stack_distribution} />
+                          <StackDistributionChart data={analytics.stack_distribution} theme={theme} />
                         ) : (
-                          <p className="admin-loading">No stack distribution data available</p>
+                          <p className="admin-loading">{t('admin.noStackDistributionData')}</p>
                         )}
                       </div>
                     </div>
@@ -814,27 +1033,39 @@ function AdminPanel({ onBack }) {
           <div className="admin-section">
             <div className="admin-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <h2 className="admin-section-title">All Projects</h2>
+                <h2 className="admin-section-title">{t('admin.allProjects')}</h2>
               </div>
               <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                <span className="admin-count">{projects.length} total</span>
-                <button
-                  className="admin-refresh-btn"
-                  onClick={() => {
-                    console.log('[AdminPanel] Manual refresh triggered for projects')
-                    fetchProjects()
-                  }}
-                  title="Refresh projects list"
-                >
-                  <svg viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-                  </svg>
-                  Refresh
-                </button>
+                <span className="admin-count">{t('admin.totalCount', { count: projects.length })}</span>
+                {projects.length > 0 && totalProjectPages > 1 && (
+                  <div className="admin-pagination-controls">
+                    <button
+                      className="admin-pagination-btn-small"
+                      onClick={() => setCurrentProjectsPage(prev => Math.max(1, prev - 1))}
+                      disabled={currentProjectsPage === 1}
+                      title={t('admin.previousPage')}
+                    >
+                      <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
+                      </svg>
+                    </button>
+                    <span className="admin-pagination-header">{t('admin.pageOf', { current: currentProjectsPage, total: totalProjectPages })}</span>
+                    <button
+                      className="admin-pagination-btn-small"
+                      onClick={() => setCurrentProjectsPage(prev => Math.min(totalProjectPages, prev + 1))}
+                      disabled={currentProjectsPage === totalProjectPages}
+                      title={t('admin.nextPage')}
+                    >
+                      <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
+                      </svg>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
             {loadingProjects ? (
-              <p className="admin-loading">Loading projects...</p>
+              <p className="admin-loading">{t('admin.loadingProjects')}</p>
             ) : projects.length === 0 ? (
               <div className="admin-empty">
                 <svg viewBox="0 0 24 24" fill="none">
@@ -843,26 +1074,26 @@ function AdminPanel({ onBack }) {
                   <rect x="3" y="13" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.5"/>
                   <rect x="13" y="13" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.5"/>
                 </svg>
-                <p>No projects found</p>
+                <p>{t('admin.noProjectsFound')}</p>
               </div>
             ) : (
               <div className="admin-projects-table">
                 <div className="admin-table-header">
-                  <span>Project</span>
-                  <span>Runtime</span>
-                  <span>Status</span>
-                  <span>Date</span>
+                  <span>{t('admin.project')}</span>
+                  <span>{t('projects.runtime')}</span>
+                  <span>{t('projects.status')}</span>
+                  <span>{t('admin.date')}</span>
                 </div>
-                {projects.map((p, i) => (
+                {projectsOnCurrentPage.map((p, i) => (
                   <div className="admin-table-row" key={p.id || i}>
                     <span className="admin-table-name">
                       <svg viewBox="0 0 24 24" fill="currentColor" className="admin-gh-icon">
                         <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.21 11.39.6.11.79-.26.79-.58v-2.23c-3.34.73-4.03-1.42-4.03-1.42-.55-1.39-1.33-1.76-1.33-1.76-1.09-.74.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.49 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 016.01 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.24 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.19.7.8.58C20.57 21.8 24 17.3 24 12c0-6.63-5.37-12-12-12z"/>
                       </svg>
-                      {p.name || '—'}
+                      {p.name || t('common.na')}
                     </span>
                     <span><TechBadge name={p.type} /></span>
-                    <span>{p.status || '—'}</span>
+                    <span>{p.status || t('common.na')}</span>
                     <span className="admin-table-date">
                       {formatDate(p.created_at)}
                     </span>
@@ -878,68 +1109,61 @@ function AdminPanel({ onBack }) {
           <div className="admin-section">
             <div className="admin-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ flex: 1 }}>
-                <h2 className="admin-section-title">All Users ({users.length} total, {filteredUsers.length} shown)</h2>
+                <h2 className="admin-section-title">{t('admin.allUsersTitle', { total: users.length, shown: filteredUsers.length })}</h2>
               </div>
               <div className="admin-filters-row">
-                <input
-                  type="text"
-                  placeholder="🔍︎ Search by email..."
-                  className="admin-search-input"
-                  value={emailSearch}
-                  onChange={(e) => setEmailSearch(e.target.value)}
-                />
+                <div className="admin-search-wrap">
+                  <input
+                    type="text"
+                    placeholder={t('admin.searchByEmail')}
+                    className="admin-search-input"
+                    value={emailSearch}
+                    onChange={(e) => setEmailSearch(e.target.value)}
+                  />
+                  {normalizedEmailQuery && (
+                    <span className="admin-search-counter" title={t('admin.matches', { count: emailMatchCount })}>
+                      {t('admin.usersFound', { count: emailMatchCount })}
+                    </span>
+                  )}
+                </div>
                 <select
                   className="admin-filter-select"
                   value={roleFilter}
                   onChange={(e) => setRoleFilter(e.target.value)}
                 >
-                  <option value="all">All Roles</option>
-                  <option value="user">User</option>
-                  <option value="admin">Admin</option>
+                  <option value="all">{t('admin.allRoles')}</option>
+                  <option value="user">{t('admin.userRole')}</option>
+                  <option value="admin">{t('admin.adminRole')}</option>
                 </select>
                 <select
                   className="admin-filter-select"
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
                 >
-                  <option value="all">All Status</option>
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
+                  <option value="all">{t('admin.allStatus')}</option>
+                  <option value="active">{t('admin.active')}</option>
+                  <option value="inactive">{t('admin.inactive')}</option>
                 </select>
               </div>
               <div className="admin-header-info">
-                <button
-                  className="admin-refresh-btn"
-                  onClick={() => {
-                    console.log('[AdminPanel] Manual refresh triggered')
-                    fetchUsers()
-                  }}
-                  title="Refresh user list"
-                  style={{ marginRight: '20px' }}
-                >
-                  <svg viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-                  </svg>
-                  Refresh
-                </button>
                 {filteredUsers.length > 0 && totalPages > 1 && (
                   <div className="admin-pagination-controls">
                     <button
                       className="admin-pagination-btn-small"
                       onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                       disabled={currentPage === 1}
-                      title="Previous page"
+                      title={t('admin.previousPage')}
                     >
                       <svg viewBox="0 0 24 24" fill="currentColor">
                         <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
                       </svg>
                     </button>
-                    <span className="admin-pagination-header">Page {currentPage} of {totalPages}</span>
+                    <span className="admin-pagination-header">{t('admin.pageOf', { current: currentPage, total: totalPages })}</span>
                     <button
                       className="admin-pagination-btn-small"
                       onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
                       disabled={currentPage === totalPages}
-                      title="Next page"
+                      title={t('admin.nextPage')}
                     >
                       <svg viewBox="0 0 24 24" fill="currentColor">
                         <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
@@ -952,21 +1176,28 @@ function AdminPanel({ onBack }) {
             
             {/* Loading state */}
             {loadingUsers ? (
-              <p className="admin-loading">Loading users...</p>
+              <p className="admin-loading">{t('admin.loadingUsers')}</p>
             ) : (
               <div className="admin-projects-table">
                 <div className="admin-table-header admin-users-header">
-                  <span>User</span>
-                  <span>Role</span>
-                  <span>Status</span>
-                  <span>Verified</span>
-                  <span>Joined</span>
-                  <span>Last Login</span>
-                  <span>Install Count</span>
-                  <span>Actions</span>
+                  <span>{t('admin.user')}</span>
+                  <span>{t('admin.role')}</span>
+                  <span>{t('admin.status')}</span>
+                  <span>{t('admin.verified')}</span>
+                  <span>{t('admin.joined')}</span>
+                  <span>{t('admin.lastLogin')}</span>
+                  <span>{t('admin.installCount')}</span>
+                  <span>{t('admin.actions')}</span>
                 </div>
-                {usersOnCurrentPage.map((u) => (
-                  <div className="admin-table-row admin-users-row" key={u.id}>
+                {usersOnCurrentPage.map((u) => {
+                  const email = (u.email || '').toLowerCase()
+                  const isEmailMatch = normalizedEmailQuery && email.includes(normalizedEmailQuery)
+
+                  return (
+                  <div
+                    className={`admin-table-row admin-users-row ${isEmailMatch ? 'admin-users-row--search-match' : ''}`}
+                    key={u.id}
+                  >
                     {/* Name + email */}
                     <div className="admin-user-info">
                       <div className="admin-user-avatar">
@@ -980,17 +1211,17 @@ function AdminPanel({ onBack }) {
 
                     {/* Role badge */}
                     <span className={`admin-role-badge ${u.role === 'admin' ? 'admin-role-badge--admin' : ''}`}>
-                      {u.role}
+                      {u.role === 'admin' ? t('admin.adminRole') : t('admin.userRole')}
                     </span>
 
                     {/* Active/inactive badge */}
                     <span className={`admin-status-badge ${u.is_active ? 'active' : 'inactive'}`}>
-                      {u.is_active ? 'Active' : 'Inactive'}
+                      {u.is_active ? t('admin.active') : t('admin.inactive')}
                     </span>
 
                     {/* Verified badge */}
                     <span className={`admin-status-badge ${u.is_verified ? 'verified' : 'unverified'}`}>
-                      {u.is_verified ? 'Verified' : 'Unverified'}
+                      {u.is_verified ? t('admin.verifiedState') : t('admin.unverifiedState')}
                     </span>
 
                     {/* Join date */}
@@ -1000,7 +1231,7 @@ function AdminPanel({ onBack }) {
 
                     {/* Last login */}
                     <span className="admin-table-date">
-                      {u.last_login ? formatDate(u.last_login) : 'Never'}
+                      {u.last_login ? formatDate(u.last_login) : t('admin.never')}
                     </span>
 
                     {/* Install count */}
@@ -1013,7 +1244,7 @@ function AdminPanel({ onBack }) {
                       {/* Toggle active */}
                       <button
                         className={`admin-action-btn ${u.is_active ? 'deactivate' : 'activate'}`}
-                        title={u.is_active ? 'Deactivate' : 'Activate'}
+                        title={u.is_active ? t('admin.deactivate') : t('admin.activate')}
                         onClick={() => handleToggleActive(u)}
                       >
                         {u.is_active ? (
@@ -1030,7 +1261,7 @@ function AdminPanel({ onBack }) {
                       {/* Delete */}
                       <button
                         className="admin-action-btn delete"
-                        title="Delete user"
+                        title={t('admin.deleteUser')}
                         onClick={() => setUserToDelete(u)}
                       >
                         <svg viewBox="0 0 24 24" fill="currentColor">
@@ -1039,7 +1270,7 @@ function AdminPanel({ onBack }) {
                       </button>
                     </div>
                   </div>
-                ))}
+                )})}
               </div>
             )}
           </div>
@@ -1048,8 +1279,8 @@ function AdminPanel({ onBack }) {
         {/* HEALTH TAB */}
         {activeTab === 'health' && (
           <div className="admin-section">
-            <h2 className="admin-section-title">System Health</h2>
-            <p className="admin-loading">Health information has been moved to the Overview tab</p>
+            <h2 className="admin-section-title">{t('admin.systemHealth')}</h2>
+            <p className="admin-loading">{t('admin.healthMoved')}</p>
           </div>
         )}
 

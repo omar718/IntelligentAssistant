@@ -2,12 +2,14 @@ from dotenv import load_dotenv
 load_dotenv()                          # loads .env (Docker defaults: host=db)
 load_dotenv(".env.local", override=True)  # local override: host=localhost
 import logging
+from pathlib import Path
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from app.api.routes import projects
 from app.core.config import settings
 from app.api.routes.auth import auth_router
@@ -25,6 +27,10 @@ app = FastAPI(
     redoc_url="/redoc" if settings.DEBUG else None,
 
 )
+
+uploads_dir = Path(__file__).resolve().parent.parent / "uploads"
+uploads_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Cookie, Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.core.config import settings
 from app.core.security import decode_access_token
 from app.models.user import User
-from app.services.user_service import get_user_by_id
+from app.services.user_service import get_user_by_id, update_session_activity
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -26,6 +26,7 @@ _403_admin = HTTPException(
 
 async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """
@@ -44,9 +45,17 @@ async def get_current_user(
     if not user_id:
         raise _401
 
+    session_id: str | None = payload.get("sid")
+
     user = await get_user_by_id(db, user_id)
     if user is None or not user.is_active:
         raise _401
+
+    if session_id:
+        session_ok = await update_session_activity(db, user.id, session_id)
+        if not session_ok:
+            raise _401
+    request.state.current_session_id = session_id
 
     return user
 

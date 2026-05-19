@@ -27,7 +27,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 # JWT access tokens  (configured TTL)
 # ---------------------------------------------------------------------------
 
-def create_access_token(subject: str, role: str) -> str:
+def create_access_token(subject: str, role: str, session_id: Optional[str] = None) -> str:
     """Create a signed JWT access token."""
     now = datetime.now(timezone.utc)
     payload = {
@@ -36,6 +36,8 @@ def create_access_token(subject: str, role: str) -> str:
         "iat": now,
         "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_TTL_MINUTES),
     }
+    if session_id:
+        payload["sid"] = session_id
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
