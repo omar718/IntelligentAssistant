@@ -35,6 +35,7 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
   const [error, setError] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [isLightTheme, setIsLightTheme] = useState(false)
   const [picking, setPicking] = useState(false)
   const [infoOverlay, setInfoOverlay] = useState(null)
   const [activeModal, setActiveModal] = useState(null)
@@ -42,6 +43,7 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
 
   const sidebarRef = useRef(null)
   const userMenuRef = useRef(null)
+  console.log('activeModal:', activeModal, 'verificationEmail:', verificationEmail)
 
   // Close sidebar/user menu when clicking outside
   useEffect(() => {
@@ -63,6 +65,17 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
       routerNavigate('/', { replace: true })
     }
   }, [location.search, routerNavigate])
+
+  useEffect(() => {
+    try {
+      const savedTheme = localStorage.getItem('theme')
+      const lightTheme = savedTheme === 'light'
+      setIsLightTheme(lightTheme)
+      document.documentElement.setAttribute('data-theme', lightTheme ? 'light' : 'dark')
+    } catch {
+      setIsLightTheme(false)
+    }
+  }, [])
 
   const isValidGitHubUrl = (url) => {
     const pattern = /^https?:\/\/(www\.)?github\.com\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+(\.git)?\/?$/
@@ -133,8 +146,21 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
     onNavigate(page)
   }
 
+  const toggleTheme = () => {
+    setIsLightTheme((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('theme', next ? 'light' : 'dark')
+        document.documentElement.setAttribute('data-theme', next ? 'light' : 'dark')
+      } catch {
+        // ignore storage errors
+      }
+      return next
+    })
+  }
+
   return (
-    <div className={`codestart-container ${sidebarOpen ? 'sidebar-active' : ''}`}>
+    <div className={`codestart-container ${isLightTheme ? 'light-theme' : ''} ${sidebarOpen ? 'sidebar-active' : ''}`}>
 
       {/* ── Sidebar (YouTube-style) ── */}
       <div ref={sidebarRef}>
@@ -182,15 +208,6 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
               <span>Projects</span>
             </button>
             
-            <button className="sidebar-item sidebar-item--active" onClick={() => setSidebarOpen(false)}>
-              {/* ... Launch Project ... */}
-              </button>
-              <button className="sidebar-item" onClick={() => sidebarNavigate('projects')}>
-                {/* ... Projects ... */}
-                </button>
-                <button className="sidebar-item" onClick={() => sidebarNavigate('admin')}>
-                  {/* ... Admin Panel ... */}
-                  </button>
                   {user ? (
                     <button className="sidebar-item logout-item" onClick={() => { setSidebarOpen(false); handleLogout() }}>
                       <svg viewBox="0 0 24 24" fill="currentColor" className="sidebar-icon">
@@ -214,6 +231,26 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
       <header className="codestart-header">
         {/* Empty left space (hamburger is positioned fixed) */}
         <div style={{ width: '40px' }} />
+
+        <div className="header-actions">
+          <button
+            className="header-theme-toggle"
+            onClick={toggleTheme}
+            title={isLightTheme ? 'Switch to dark theme' : 'Switch to light theme'}
+          >
+            <span className="header-theme-toggle-icon" aria-hidden="true">
+              {isLightTheme ? (
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M6.76 4.84 4.96 3.05 3.55 4.46l1.79 1.79 1.42-1.41ZM1 13h3v-2H1v2Zm10 9h2v-3h-2v3Zm7.03-2.03 1.79 1.79 1.41-1.41-1.79-1.79-1.41 1.41ZM17.24 4.84l1.41 1.41 1.79-1.79-1.41-1.41-1.79 1.79ZM20 11v2h3v-2h-3Zm-8-5a6 6 0 1 0 0 12 6 6 0 0 0 0-12Z" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M21.64 13a9 9 0 1 1-10.6-10.6A7 7 0 0 0 21.64 13Z" />
+                </svg>
+              )}
+            </span>
+          </button>
+        </div>
 
         {/* ── User icon or Log In button – top right ── */}
         {user ? (

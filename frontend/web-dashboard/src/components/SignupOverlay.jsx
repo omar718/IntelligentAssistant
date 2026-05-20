@@ -205,7 +205,8 @@ function SignupOverlay({ onNavigate, onClose, onVerificationNeeded }) {
 
           {error && <p className="auth-error">{error}</p>}
 
-          <button type="submit" className="auth-button" disabled={loading}>
+          <button type="submit" className="auth-button" disabled={loading} onClick={(e) => e.stopPropagation()}>
+
             {loading ? t('auth.creatingAccount') : t('auth.signUpTitle')}
           </button>
         </form>

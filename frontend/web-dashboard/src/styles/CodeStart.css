@@ -800,6 +800,54 @@
   opacity: 0.85;
 }
 
+.codestart-container.light-theme {
+  --page-bg-start: #f6f8fb;
+  --page-bg-mid: #eef3f8;
+  --page-bg-end: #e6eef8;
+  --text-primary: #13233d;
+  --text-secondary: #2b3f57;
+  --text-muted: #5a6b7f;
+  --panel-bg: #ffffff;
+  --panel-bg-hover: #f7fbff;
+  --surface-elevated: #ffffff;
+  --surface-overlay: rgba(19, 35, 61, 0.06);
+  --border-strong: rgba(19, 35, 61, 0.08);
+  --border-soft: rgba(19, 35, 61, 0.06);
+  --field-bg: #f6f7f9;
+  --field-bg-hover: #ffffff;
+  --field-border: #e6edf6;
+  --field-border-focus: rgba(100, 180, 255, 0.6);
+  --field-text: #13233d;
+  --field-placeholder: rgba(19, 35, 61, 0.44);
+  --button-primary-start: #3d8edb;
+  --button-primary-end: #2b6fb3;
+  --button-primary-hover-start: #4fa1f1;
+  --button-primary-hover-end: #2e77c3;
+  --button-text: #ffffff;
+  --toggle-bg: #f2f6fb;
+  --toggle-bg-hover: #e5eef9;
+  --toggle-text: #13233d;
+  --toggle-border: #e6edf6;
+}
+
+.codestart-container.light-theme .sidebar-panel {
+  background: #ffffff;
+  border-right: 1px solid rgba(19, 35, 61, 0.06);
+}
+
+.codestart-container.light-theme .sidebar-item {
+  color: var(--text-secondary);
+}
+
+.codestart-container.light-theme .hamburger-icon {
+  color: var(--text-primary);
+}
+
+.codestart-container.light-theme .logo,
+.codestart-container.light-theme .logo-icon-svg {
+  color: var(--text-primary);
+}
+
 .sidebar-divider {
   border: none;
   border-top: 1px solid var(--border-soft);
