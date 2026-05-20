@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { authApi, userApi } from '../api/client'
 import '../styles/Auth.css'
 
 function LoginOverlay({ onNavigate, onClose, onLogin }) {
+  const { t } = useTranslation()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -19,7 +21,7 @@ function LoginOverlay({ onNavigate, onClose, onLogin }) {
 
     if (Object.keys(empty).length > 0) {
       setEmptyFields(empty)
-      setError('Please fill in all fields.')
+      setError(t('auth.pleaseFillInAllFields'))
       return
     }
 
@@ -41,7 +43,7 @@ function LoginOverlay({ onNavigate, onClose, onLogin }) {
       onClose()
     } catch (err) {
       const detail = err?.response?.data?.detail
-      setError(typeof detail === 'string' ? detail : 'Login failed. Please check your credentials.')
+      setError(typeof detail === 'string' ? detail : t('auth.loginFailed'))
     } finally {
       setLoading(false)
     }
@@ -51,16 +53,16 @@ function LoginOverlay({ onNavigate, onClose, onLogin }) {
     <div className="auth-modal-overlay" onClick={onClose}>
       <div className="auth-card" onClick={(e) => e.stopPropagation()}>
 
-        <button className="auth-modal-close" onClick={onClose} title="Close">
+        <button className="auth-modal-close" onClick={onClose} title={t('auth.close')}>
           &times;
         </button>
 
-        <h1 className="auth-title">Login</h1>
-        <p className="auth-subtitle">Welcome back! Login to your account.</p>
+        <h1 className="auth-title">{t('auth.loginTitle')}</h1>
+        <p className="auth-subtitle">{t('auth.loginSubtitle')}</p>
 
         <form className="auth-form" onSubmit={handleSubmit}>
           <div className="auth-field">
-            <label className="auth-label" htmlFor="login-email">Email</label>
+            <label className="auth-label" htmlFor="login-email">{t('auth.emailLabel')}</label>
             <input
               id="login-email"
               type="email"
@@ -72,7 +74,7 @@ function LoginOverlay({ onNavigate, onClose, onLogin }) {
           </div>
 
           <div className="auth-field">
-            <label className="auth-label" htmlFor="login-password">Password</label>
+            <label className="auth-label" htmlFor="login-password">{t('auth.passwordLabel')}</label>
             <div className="password-wrapper">
               <input
                 id="login-password"
@@ -106,21 +108,21 @@ function LoginOverlay({ onNavigate, onClose, onLogin }) {
               className="auth-forgot-password" 
               onClick={() => onNavigate('forgot-password-modal')}
             >
-              Forgot Password?
+              {t('auth.forgotPassword')}
             </span>
           </div>
 
           {error && <p className="auth-error">{error}</p>}
 
           <button type="submit" className="auth-button" disabled={loading}>
-            {loading ? 'Logging in...' : 'Login'}
+            {loading ? t('auth.loggingIn') : t('auth.loginTitle')}
           </button>
         </form>
 
         <p className="auth-switch-text">
-          Don't have an account?{' '}
+          {t('auth.dontHaveAccount')}{' '}
           <span className="auth-switch-link" onClick={() => onNavigate('signup-modal')}>
-            Sign up
+            {t('auth.signUp')}
           </span>
         </p>
 

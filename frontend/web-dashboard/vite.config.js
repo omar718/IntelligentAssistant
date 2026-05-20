@@ -19,6 +19,34 @@ export default defineConfig({
         proxyTimeout: 600000,
         credentials: 'include',  // Pass cookies and auth headers
       },
+      '/admin/users': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        timeout: 600000,
+        proxyTimeout: 600000,
+        credentials: 'include',  // Pass cookies and auth headers
+      },
+      '/admin/projects': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        timeout: 600000,
+        proxyTimeout: 600000,
+        credentials: 'include',  // Pass cookies and auth headers
+      },
+      '/admin/analytics': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        timeout: 600000,
+        proxyTimeout: 600000,
+        credentials: 'include',  // Pass cookies and auth headers
+      },
+      '/admin/audit-logs': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        timeout: 600000,
+        proxyTimeout: 600000,
+        credentials: 'include',  // Pass cookies and auth headers
+      },
     },
   },
 });

@@ -134,6 +134,42 @@ export const userApi = {
   },
 
   
+  // List active sessions for the logged-in user
+  getActiveSessions: () =>
+    api.get('/api/sessions').then(r => r.data),
+
+  // Log out all sessions except the current one
+  logoutAllSessionsExceptCurrent: () =>
+    api.post('/api/sessions/logout-all').then(r => r.data),
+
+  // Log out a specific session
+  logoutSession: (sessionId: string) =>
+    api.delete(`/api/sessions/${sessionId}`).then(r => r.data),
+
+  // Change password for the logged-in user
+  changePassword: (data: { current_password: string; new_password: string; confirm_password: string }) =>
+    api.post('/api/users/me/change-password', data).then(r => r.data),
+
+  // Upload profile picture for the logged-in user
+  uploadProfileImage: (file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    return axios.post(
+      `${(import.meta as any).env.VITE_API_URL || ''}/api/users/me/profile-picture`,
+      formData,
+      {
+        withCredentials: true,
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('access_token') || ''}`,
+        },
+      },
+    ).then(r => r.data)
+  },
+
+  // Remove profile picture for the logged-in user
+  removeProfileImage: () =>
+    api.delete('/api/users/me/profile-picture').then(r => r.data),
 };
 
 // ── Health check ───────────────────────────────────────────────────────────────
@@ -141,6 +177,67 @@ export const userApi = {
 export const healthApi = {
   check: () =>
     api.get('/health').then(r => r.data),
+};
+
+// ── Admin API ───────────────────────────────────────────────────────────────────
+
+export const adminApi = {
+  // ── Analytics ───────────────────────────────────────────────────────────────
+  
+  // Get Analytics
+  getAnalytics: (dateFrom?: string, dateTo?: string) =>
+    api.get('/admin/analytics', { params: { date_from: dateFrom, date_to: dateTo } }).then(r => r.data),
+  
+  // Export Analytics
+  exportAnalytics: () =>
+    api.get('/admin/analytics/export', { responseType: 'blob' }).then(r => r.data),
+
+  // ── Audit Logs ─────────────────────────────────────────────────────────────
+  
+  // List all audit logs
+  listAuditLogs: (params?: { limit?: number; offset?: number; user_id?: string }) =>
+    api.get('/admin/audit-logs', { params }).then(r => r.data),
+
+  // ── User Management ────────────────────────────────────────────────────────
+  
+  // List all users (replaces MOCK_USERS)
+  listUsers: (params?: { 
+    email?: string; 
+    role?: 'user' | 'admin' | 'all'; 
+    is_active?: boolean; 
+    limit?: number; 
+    offset?: number 
+  }) =>
+    api.get('/admin/users', { params }).then(r => r.data),
+
+  // Get single user by ID
+  getUser: (userId: string) =>
+    api.get(`/admin/users/${userId}`).then(r => r.data),
+
+  // Patch/Update user (activate/deactivate, change role, etc.)
+  patchUser: (userId: string, data: { 
+    is_active?: boolean; 
+    role?: string; 
+    name?: string;
+    reason?: string;
+  }) =>
+    api.patch(`/admin/users/${userId}`, data).then(r => r.data),
+
+  // Get audit logs for specific user
+  getUserAuditLogs: (userId: string, params?: { limit?: number; offset?: number }) =>
+    api.get(`/admin/users/${userId}/audit-logs`, { params }).then(r => r.data),
+
+  // Delete user
+  deleteUser: (userId: string, reason: string) =>
+    api.request({
+      method: 'delete',
+      url: `/admin/users/${userId}`,
+      data: { reason }
+    }).then(r => r.data),
+
+  // List all projects
+  listProjects: () =>
+    api.get('/admin/projects').then(r => r.data),
 };
 
 // Response interceptor

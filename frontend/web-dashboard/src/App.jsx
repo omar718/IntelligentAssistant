@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import './App.css'
 import CodeStart from './components/CodeStart'
 import Processing from './components/Processing'
 import ProjectsList from './components/ProjectsList'
 import AdminPanel from './components/AdminPanel'
+import SettingsPage from './components/SettingsPage'
 import VSCodeModal from './components/VSCodeModal'
 import ResetPassword from './components/ResetPassword'
 import VerifyEmailResult from './components/VerifyEmail/VerifyEmailResult'
@@ -21,16 +23,18 @@ function AdminRoute({ user, children }) {
 }
 
 // ── Main website pages ────────────────────────────────────────────────────────
-function MainApp({ user, onLogin, onLogout }) {
+function MainApp({ user, onLogin, onLogout, onUserUpdate, theme, onToggleTheme }) {
   const [currentPage, setCurrentPage] = useState('home')
   const [gitUrl, setGitUrl] = useState('')
   const [cloneDir, setCloneDir] = useState('')
   const [showVSCodeModal, setShowVSCodeModal] = useState(false)
+  const [projectError, setProjectError] = useState(null)
 
   const handleAnalyze = (url, dir) => {
     console.log('[App] handleAnalyze called with:', { url, dir })
     setGitUrl(url)
     setCloneDir(dir || '')
+    setProjectError(null) // Clear any previous error
     console.log('[App] State updated, navigating to processing page')
     setCurrentPage('processing')
   }
@@ -39,10 +43,18 @@ function MainApp({ user, onLogin, onLogout }) {
     setCurrentPage('home')
     setGitUrl('')
     setCloneDir('')
+    setProjectError(null)
+  }
+
+  const handleProcessingError = (error) => {
+    console.log('[App] Repo-not-found error, returning to home with error:', error)
+    setProjectError(error)
+    setCurrentPage('home')
   }
 
   return (
-    <>
+    <div className="app-shell">
+      <>
       {currentPage === 'home' && (
         <CodeStart
           onAnalyze={handleAnalyze}
@@ -50,6 +62,10 @@ function MainApp({ user, onLogin, onLogout }) {
           user={user}
           onLogin={onLogin}
           onLogout={onLogout}
+          theme={theme}
+          onToggleTheme={onToggleTheme}
+          projectError={projectError}
+          onClearProjectError={() => setProjectError(null)}
         />
       )}
       {currentPage === 'processing' && (
@@ -58,16 +74,26 @@ function MainApp({ user, onLogin, onLogout }) {
           cloneDir={cloneDir}
           onBack={handleBack}
           onVSCodeNotFound={() => setShowVSCodeModal(true)}
+          onError={handleProcessingError}
         />
       )}
       {currentPage === 'projects' && (
         <ProjectsList onBack={() => setCurrentPage('home')} />
       )}
 
+      {currentPage === 'settings' && (
+        <SettingsPage
+          user={user}
+          onBack={() => setCurrentPage('home')}
+          onUserUpdate={onUserUpdate}
+        />
+      )}
+
       {showVSCodeModal && (
         <VSCodeModal onClose={() => setShowVSCodeModal(false)} />
       )}
-    </>
+      </>
+    </div>
   )
 }
 
@@ -78,6 +104,12 @@ function App() {
     const saved = localStorage.getItem('user')
     return saved ? JSON.parse(saved) : null
   })
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark')
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('theme', theme)
+  }, [theme])
 
   useEffect(() => {
     let cancelled = false
@@ -117,6 +149,10 @@ function App() {
     setUser(null)
   }
 
+  const toggleTheme = () => {
+    setTheme((current) => (current === 'dark' ? 'light' : 'dark'))
+  }
+
   return (
     <BrowserRouter>
       <Routes>
@@ -132,6 +168,9 @@ function App() {
               user={user}
               onLogin={handleLogin}
               onLogout={handleLogout}
+              onUserUpdate={handleLogin}
+              theme={theme}
+              onToggleTheme={toggleTheme}
             />
           }
         />
@@ -141,7 +180,11 @@ function App() {
           path="/admin"
           element={
             <AdminRoute user={user}>
-              <AdminPanel onBack={() => window.history.back()} />
+              <AdminPanel
+                onBack={() => window.history.back()}
+                theme={theme}
+                onToggleTheme={toggleTheme}
+              />
             </AdminRoute>
           }
         />
