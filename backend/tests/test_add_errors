@@ -1,0 +1,19 @@
+from test_dataset import init_csv, add_entry, list_entries
+
+init_csv()
+
+add_entry("django-oscar/django-oscar", "Python", "install_failure", "ConflictError", "Process\ exited\ immediately\ with\ code\ 1\.")
+add_entry("codingforentrepreneurs/eCommerce", "Python", "install_failure", "ConflictError", "Process\ exited\ immediately\ with\ code\ 1\.")
+add_entry("justdjango/django-ecommerce", "Django", "install_failure", "ConflictError", "No\ package\.json\ found\ to\ determine\ Node\ launch\ command\.")
+add_entry("/justdjango/django-simple-ecommerce", "HTML", "install_failure", "ConflictError", "Unsupported\ project\ type:\ static")
+add_entry("aviabird/angularspree", "Nodejs", "install_failure", "ConflictError", "Failed\ to\ start\ Docker\ Compose\ stack\.\ time=level=warning\msg='C:\\\\Users\\\\Asus\\\\Documents\\\\angularspree\\\\docker\-compose\.yml:\ the\ attribute\ `version`\ is\ obsolete,\ it\ will\ be\ ignored,\ please\ remove\ it\ to\ avoid\ potential\ issues\ in\ the\ future")
+add_entry("yoonic/nicistore", "Nodejs", "install_failure", "ConflictError", "Docker\ container\ bound\ port\ 3002\ but\ did\ not\ return\ HTTP\ responses\ in\ time\.")
+add_entry("jaygajera17/E-commerce-project-springBoot", "Java", "install_failure", "ConflictError", "Docker\ container\ bound\ port\ 8080\ but\ did\ not\ return\ HTTP\ responses\ in\ time\.")
+add_entry("IsAmitprajapati/Full-Stack-E-Commerce-MERN-APP", "Nodejs", "install_failure", "ConflictError", "No\ package\.json\ found\ to\ determine\ Node\ launch\ command\.")
+add_entry("HuXn-WebDev/MERN-E-Commerce-Store", "Nodejs", "install_failure", "ConflictError", "Process\ exited\ immediately\ with\ code\ 1\.")
+add_entry("i-love-flamingo/flamingo-commerce", "GO", "install_failure", "ConflictError", "Docker\ container\ bound\ port\ 8080\ but\ did\ not\ return\ HTTP\ responses\ in\ time\.")
+add_entry("kelvin-mai/nest-commerce", "Nodejs", "install_failure", "ConflictError", "Docker\ container\ bound\ port\ 3003\ but\ did\ not\ return\ HTTP\ responses\ in\ time\.")
+
+
+
+list_entries()

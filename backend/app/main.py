@@ -13,7 +13,11 @@ from app.core.config import settings
 from app.api.routes.auth import auth_router
 from app.api.routes import analytics as admin_analytics   
 from app.api.routes import users as admin_users           
-from app.websocket.router import router as ws_router     
+from app.websocket.router import router as ws_router   
+from app.core.ai.error_pattern_bootstrap import bootstrap_error_patterns_on_startup
+from app.api.routes import reports
+
+
 
 
 
@@ -25,6 +29,11 @@ app = FastAPI(
     redoc_url="/redoc" if settings.DEBUG else None,
 
 )
+
+
+@app.on_event("startup")
+async def startup_bootstrap() -> None:
+    bootstrap_error_patterns_on_startup()
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,6 +48,8 @@ app.include_router(auth_router, tags=["auth"])
 app.include_router(admin_analytics.router, prefix="/admin", tags=["admin-analytics"])
 app.include_router(admin_users.router, prefix="/admin", tags=["admin-users"])
 app.include_router(ws_router)
+app.include_router(reports.router)
+
 
 @app.get("/health")
 async def health():

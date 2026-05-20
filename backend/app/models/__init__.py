@@ -5,9 +5,9 @@ from app.models.error_pattern import ErrorPattern
 from app.models.configuration_template import ConfigurationTemplate
 from app.models.user import User, UserRole
 from app.models.refresh_token import RefreshToken
-
+from app.models.report import StackReport
 __all__ = [
     'Base', 'Project', 'ProjectStatus',
     'InstallationHistory', 'ErrorPattern', 'ConfigurationTemplate',
-    'User', 'RefreshToken',
+    'User', 'RefreshToken', 'StackReport'
 ]

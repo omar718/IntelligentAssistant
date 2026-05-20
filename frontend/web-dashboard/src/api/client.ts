@@ -108,6 +108,7 @@ export const projectsApi = {
   // Request cancellation for a running project creation task
   cancelTask: (taskId: string) =>
     api.post(`/api/projects/tasks/${taskId}/cancel`).then(r => r.data),
+  
 };
 
 // ── User API ───────────────────────────────────────────────────────────────────
@@ -124,6 +125,15 @@ export const userApi = {
   // Get the stats for the logged-in user
   getMyStats: () =>
     api.get('/api/users/me/stats').then(r => r.data),
+
+  downloadReport: async (projectId: string) => {
+    const res = await api.get(`/api/projects/${projectId}/report`, {
+      responseType: 'blob',   
+    })
+    return res.data
+  },
+
+  
 };
 
 // ── Health check ───────────────────────────────────────────────────────────────

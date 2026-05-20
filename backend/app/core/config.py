@@ -37,11 +37,23 @@ class Settings(BaseSettings):
 
     # GROQ (server-side only — NEVER sent to clients)
     GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
 
     class Config:
         env_file = (_ENV_FILE, _ENV_LOCAL_FILE)
         env_file_encoding = "utf-8"
         extra = "ignore"
+
+    # Backblaze B2
+    B2_KEY_ID:           str
+    B2_APPLICATION_KEY:  str
+    B2_BUCKET:           str
+    B2_REGION:           str
+
+    @property
+    def B2_ENDPOINT(self) -> str:
+        return f"https://s3.{self.B2_REGION}.backblazeb2.com"
+    
 
 
 @lru_cache()

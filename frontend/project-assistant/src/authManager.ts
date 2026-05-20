@@ -20,6 +20,7 @@ export class AuthManager {
   private healthPollTimer: NodeJS.Timeout | undefined;
   private isOnline = false;
   private isSessionVerified = false;
+  private sessionExpiredNotified = false;
   private readonly onLog: (message: string, level?: LogLevel) => void;
 
   constructor(
@@ -119,6 +120,7 @@ export class AuthManager {
     const { access_token } = response.data;
     await this.storeToken(access_token);
     this.isSessionVerified = true;
+    this.sessionExpiredNotified = false;
     await this.setAuthContext(true);
     this.log(`Signed in as ${response.data.user.email}.`, "success");
     vscode.window.showInformationMessage(`Signed in as ${response.data.user.email}`);
@@ -274,6 +276,11 @@ export class AuthManager {
   }
 
   private showSessionExpired(): void {
+    if (this.sessionExpiredNotified) {
+      return;
+    }
+    this.sessionExpiredNotified = true;
+
     this.statusBar.text = "$(lock) Session expired — Click to sign in";
     this.statusBar.command = "project-assistant.login";
     this.statusBar.backgroundColor = new vscode.ThemeColor(

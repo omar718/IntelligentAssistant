@@ -42,6 +42,11 @@
     },
     "commands": [
       {
+        "command": "project-assistant.analyzeWorkspace",
+        "title": "Project Assistant: Analyse Open Workspace",
+        "icon": "$(search)"
+      },
+      {
         "command": "project-assistant.login",
         "title": "Project Assistant: Sign In",
         "icon": "$(account)"

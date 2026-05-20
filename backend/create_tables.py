@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS error_patterns (
     project_type VARCHAR(50),
     solutions JSON,
     occurrences INTEGER DEFAULT 1,
-    success_rate FLOAT
+    success_rate FLOAT,
+    embedding TEXT
 );
 
 CREATE TABLE IF NOT EXISTS configuration_templates (

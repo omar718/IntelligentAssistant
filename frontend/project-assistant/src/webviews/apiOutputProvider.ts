@@ -2,11 +2,16 @@ import * as vscode from 'vscode';
 
 type LogLevel = 'info' | 'warning' | 'error' | 'success';
 type UiAction =
+  | 'analyzeWorkspace'
   | 'login'
   | 'logout'
   | 'openInstallGuide'
   | 'chooseDocker'
-  | 'retryConflict';
+  | 'retryConflict'
+  | 'chooseAutoTroubleshoot'
+  | 'chooseGuidedTroubleshoot'
+  | 'specifyFile'
+  | 'cancelInstall';
 
 interface LogEntry {
   id: number;
@@ -23,6 +28,10 @@ export class ApiOutputViewProvider implements vscode.WebviewViewProvider {
   private _installGuideUrl: string | undefined;
   private _actionMessage: string | undefined;
   private _showConflictActions = false;
+  private _showTroubleshootActions = false;
+  private _showFileInput = false;
+  private _installInProgress = false;
+  private _isAuthenticated = false;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -84,13 +93,35 @@ export class ApiOutputViewProvider implements vscode.WebviewViewProvider {
     this._actionMessage = message;
     this._installGuideUrl = installGuideUrl;
     this._showConflictActions = false;
+    this._showTroubleshootActions = false;
     this._postActionState();
   }
 
-  setConflictAction(message: string, installGuideUrl?: string): void {
+  setTroubleshootModeAction(message: string): void {
+    this._actionMessage = message;
+    this._installGuideUrl = undefined;
+    this._showConflictActions = false;
+    this._showTroubleshootActions = true;
+    this._showFileInput = false;
+    this._postActionState();
+  }
+
+  setConflictAction(message: string, installGuideUrl?: string, showFileInput: boolean = false): void {
     this._actionMessage = message;
     this._installGuideUrl = installGuideUrl;
-    this._showConflictActions = true;
+    this._showConflictActions = !showFileInput;
+    this._showTroubleshootActions = false;
+    this._showFileInput = showFileInput;
+    this._postActionState();
+  }
+
+  setInstallInProgress(active: boolean): void {
+    this._installInProgress = active;
+    this._postActionState();
+  }
+
+  setAuthenticated(isAuthenticated: boolean): void {
+    this._isAuthenticated = isAuthenticated;
     this._postActionState();
   }
 
@@ -98,6 +129,8 @@ export class ApiOutputViewProvider implements vscode.WebviewViewProvider {
     this._actionMessage = undefined;
     this._installGuideUrl = undefined;
     this._showConflictActions = false;
+    this._showTroubleshootActions = false;
+    this._showFileInput = false;
     this._postActionState();
   }
 
@@ -119,6 +152,10 @@ export class ApiOutputViewProvider implements vscode.WebviewViewProvider {
       message: this._actionMessage,
       installGuideUrl: this._installGuideUrl,
       showConflictActions: this._showConflictActions,
+      showTroubleshootActions: this._showTroubleshootActions,
+      showFileInput: this._showFileInput,
+      installInProgress: this._installInProgress,
+      isAuthenticated: this._isAuthenticated,
     });
   }
 
@@ -188,6 +225,24 @@ export class ApiOutputViewProvider implements vscode.WebviewViewProvider {
           .toolbar {
             display: flex;
             gap: 8px;
+            align-items: flex-start;
+          }
+
+          .toolbar-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+          }
+
+          #analyze-btn {
+            background: color-mix(in srgb, var(--accent) 82%, #000 18%);
+            border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
+            color: var(--vscode-button-foreground);
+            font-weight: 600;
+          }
+
+          #analyze-btn:hover {
+            background: color-mix(in srgb, var(--accent) 88%, #000 12%);
           }
 
           button {
@@ -249,6 +304,9 @@ export class ApiOutputViewProvider implements vscode.WebviewViewProvider {
             flex-wrap: wrap;
           }
 
+          body[data-authenticated="false"] #sign-out-btn { display: none; }
+          body[data-authenticated="true"] #sign-in-btn { display: none; }
+
           .empty {
             display: grid;
             place-items: center;
@@ -293,18 +351,22 @@ export class ApiOutputViewProvider implements vscode.WebviewViewProvider {
           }
         </style>
       </head>
-      <body>
+      <body data-authenticated="false">
         <div class="header">
           <div class="title">
+            <button id="analyze-btn" type="button">Analyse</button>
             <h1>Console</h1>
             <p>Authentication, install, and runtime logs shown here.</p>
           </div>
           <div class="toolbar">
-            <button id="clear-btn" type="button">Clear</button>
-              <div class="auth-row">
-                <button id="sign-in-btn" type="button">Sign In</button>
-                <button id="sign-out-btn" type="button">Sign Out</button>
-              </div>
+            <div class="toolbar-stack">
+              <button id="clear-btn" type="button">Clear</button>
+              <button id="cancel-install-btn" type="button" disabled>Cancel</button>
+            </div>
+            <div class="auth-row">
+              <button id="sign-in-btn" type="button">Sign In</button>
+              <button id="sign-out-btn" type="button">Sign Out</button>
+            </div>
 
           </div>
         </div>
@@ -325,6 +387,14 @@ export class ApiOutputViewProvider implements vscode.WebviewViewProvider {
                 <button id="use-docker-btn" type="button" style="display:none;">Use Docker</button>
                 <button id="retry-conflict-btn" type="button" style="display:none;">I Fixed It, Retry</button>
               </div>
+              <div id="troubleshoot-row" class="action-row" style="display:none;">
+                <button id="auto-troubleshoot-btn" type="button">Auto troubleshoot</button>
+                <button id="guided-troubleshoot-btn" type="button">Guided troubleshoot</button>
+              </div>
+              <div id="file-input-row" class="action-row" style="display:none;">
+                <input id="file-input" type="text" placeholder="Enter Python entry file (e.g., src/main.py, app.py, or services/app.py)" style="flex: 1; padding: 6px;">
+                <button id="submit-file-btn" type="button">Submit</button>
+              </div>
             </div>
           </div>
         </div>
@@ -340,7 +410,15 @@ export class ApiOutputViewProvider implements vscode.WebviewViewProvider {
           const installGuideBtn = document.getElementById('install-guide-btn');
           const useDockerBtn = document.getElementById('use-docker-btn');
           const retryConflictBtn = document.getElementById('retry-conflict-btn');
+          const autoTroubleshootBtn = document.getElementById('auto-troubleshoot-btn');
+          const guidedTroubleshootBtn = document.getElementById('guided-troubleshoot-btn');
+          const troubleshootRow = document.getElementById('troubleshoot-row');
+          const fileInputRow = document.getElementById('file-input-row');
+          const fileInput = document.getElementById('file-input');
+          const submitFileBtn = document.getElementById('submit-file-btn');
+          const analyzeBtn = document.getElementById('analyze-btn');
           const clearBtn = document.getElementById('clear-btn');
+          const cancelInstallBtn = document.getElementById('cancel-install-btn');
           const signInBtn = document.getElementById('sign-in-btn');
           const signOutBtn = document.getElementById('sign-out-btn');
           let entries = [];
@@ -394,8 +472,22 @@ export class ApiOutputViewProvider implements vscode.WebviewViewProvider {
             scrollToLatest();
           }
 
+          analyzeBtn.addEventListener('click', () => {
+            if (analyzeBtn.disabled) {
+              return;
+            }
+            vscode.postMessage({ type: 'uiAction', action: 'analyzeWorkspace' });
+          });
+
           clearBtn.addEventListener('click', () => {
             vscode.postMessage({ type: 'clear' });
+          });
+
+          cancelInstallBtn.addEventListener('click', () => {
+            if (cancelInstallBtn.disabled) {
+              return;
+            }
+            vscode.postMessage({ type: 'uiAction', action: 'cancelInstall' });
           });
 
           installGuideBtn.addEventListener('click', () => {
@@ -413,6 +505,32 @@ export class ApiOutputViewProvider implements vscode.WebviewViewProvider {
             vscode.postMessage({ type: 'uiAction', action: 'retryConflict' });
           });
 
+          autoTroubleshootBtn.addEventListener('click', () => {
+            vscode.postMessage({ type: 'uiAction', action: 'chooseAutoTroubleshoot' });
+          });
+
+          guidedTroubleshootBtn.addEventListener('click', () => {
+            vscode.postMessage({ type: 'uiAction', action: 'chooseGuidedTroubleshoot' });
+          });
+
+          submitFileBtn.addEventListener('click', () => {
+            const filename = fileInput.value.trim();
+            if (filename.length === 0) {
+              fileInput.focus();
+              return;
+            }
+            actionText.textContent = 'Submitting specified file...';
+            vscode.postMessage({ type: 'uiAction', action: 'specifyFile', payload: filename });
+            fileInput.value = '';
+          });
+
+          fileInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              submitFileBtn.click();
+            }
+          });
+
           signInBtn.addEventListener('click', () => {
             vscode.postMessage({ type: 'uiAction', action: 'login' });
           });
@@ -423,34 +541,38 @@ export class ApiOutputViewProvider implements vscode.WebviewViewProvider {
 
           window.addEventListener('message', (event) => {
             const message = event.data;
-            if (message.type === 'actionState') {
-              actions.classList.add('visible');
-
-              const hasActionMessage = typeof message.message === 'string' && message.message.trim().length > 0;
-              installGuideUrl = typeof message.installGuideUrl === 'string' ? message.installGuideUrl : null;
-              const showConflictActions = Boolean(message.showConflictActions);
-
-              if (hasActionMessage) {
-                actionCard.style.display = 'block';
-                actionText.textContent = message.message;
-                installGuideBtn.style.display = installGuideUrl ? 'inline-block' : 'none';
-                useDockerBtn.style.display = showConflictActions ? 'inline-block' : 'none';
-                retryConflictBtn.style.display = showConflictActions ? 'inline-block' : 'none';
-              } else {
-                actionCard.style.display = 'none';
-              }
-            }
-            if (message.type === 'snapshot') {
-              entries = Array.isArray(message.entries) ? message.entries : [];
-              render();
-            }
-            if (message.type === 'append') {
-              entries.push(message.entry);
-              render();
-            }
-            if (message.type === 'clear') {
-              entries = [];
-              render();
+            switch (message.type) {
+              case 'snapshot':
+                entries = message.entries || [];
+                render();
+                break;
+              case 'append':
+                if (message.entry) {
+                  entries.push(message.entry);
+                  if (entries.length > 400) {
+                    entries.splice(0, entries.length - 400);
+                  }
+                  render();
+                }
+                break;
+              case 'clear':
+                entries = [];
+                render();
+                break;
+              case 'actionState':
+                actionText.textContent = message.message || '';
+                installGuideUrl = message.installGuideUrl;
+                actionCard.style.display = message.message ? 'block' : 'none';
+                actions.classList.toggle('visible', !!message.message);
+                installGuideBtn.style.display = message.installGuideUrl ? 'block' : 'none';
+                useDockerBtn.style.display = message.showConflictActions ? 'block' : 'none';
+                retryConflictBtn.style.display = message.showConflictActions ? 'block' : 'none';
+                troubleshootRow.style.display = message.showTroubleshootActions ? 'flex' : 'none';
+                fileInputRow.style.display = message.showFileInput ? 'flex' : 'none';
+                cancelInstallBtn.disabled = !message.installInProgress;
+                document.body.dataset.authenticated = String(!!message.isAuthenticated);
+                scrollToLatest();
+                break;
             }
           });
         </script>

@@ -1,0 +1,12 @@
+project_name,tech_stack,phase,error_type,error_message,resolution,resolved,tested_on
+django-oscar/django-oscar,Python,install_failure,ConflictError,Process\ exited\ immediately\ with\ code\ 1\.,,False,2026-05-12
+codingforentrepreneurs/eCommerce,Python,install_failure,ConflictError,Process\ exited\ immediately\ with\ code\ 1\.,,False,2026-05-12
+justdjango/django-ecommerce,Django,install_failure,ConflictError,No\ package\.json\ found\ to\ determine\ Node\ launch\ command\.,,False,2026-05-12
+/justdjango/django-simple-ecommerce,HTML,install_failure,ConflictError,Unsupported\ project\ type:\ static,,False,2026-05-12
+aviabird/angularspree,Nodejs,install_failure,ConflictError,"Failed\ to\ start\ Docker\ Compose\ stack\.\ time=level=warning\msg='C:\\Users\\Asus\\Documents\\angularspree\\docker\-compose\.yml:\ the\ attribute\ `version`\ is\ obsolete,\ it\ will\ be\ ignored,\ please\ remove\ it\ to\ avoid\ potential\ issues\ in\ the\ future",,False,2026-05-12
+yoonic/nicistore,Nodejs,install_failure,ConflictError,Docker\ container\ bound\ port\ 3002\ but\ did\ not\ return\ HTTP\ responses\ in\ time\.,,False,2026-05-12
+jaygajera17/E-commerce-project-springBoot,Java,install_failure,ConflictError,Docker\ container\ bound\ port\ 8080\ but\ did\ not\ return\ HTTP\ responses\ in\ time\.,,False,2026-05-12
+IsAmitprajapati/Full-Stack-E-Commerce-MERN-APP,Nodejs,install_failure,ConflictError,No\ package\.json\ found\ to\ determine\ Node\ launch\ command\.,,False,2026-05-12
+HuXn-WebDev/MERN-E-Commerce-Store,Nodejs,install_failure,ConflictError,Process\ exited\ immediately\ with\ code\ 1\.,,False,2026-05-12
+i-love-flamingo/flamingo-commerce,GO,install_failure,ConflictError,Docker\ container\ bound\ port\ 8080\ but\ did\ not\ return\ HTTP\ responses\ in\ time\.,,False,2026-05-12
+kelvin-mai/nest-commerce,Nodejs,install_failure,ConflictError,Docker\ container\ bound\ port\ 3003\ but\ did\ not\ return\ HTTP\ responses\ in\ time\.,,False,2026-05-12

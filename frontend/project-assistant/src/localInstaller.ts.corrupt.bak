@@ -1,0 +1,2691 @@
+import * as cp from 'child_process';
+import * as path from 'path';
+import * as fs from 'fs';
+import axios, { AxiosInstance } from 'axios';
+
+export interface InstallContext {
+  projectId: string;
+  hostPath: string;
+  projectType: string;
+  detectedPm: string;
+  runCommand?: string;
+  launchPort?: number;
+  envVars?: Record<string, string>;
+  versionConstraints?: Record<string, string>;
+  services?: ServiceInstallSpec[];
+}
+
+export interface ServiceInstallSpec {
+  name?: string;
+  path?: string;
+  role?: string;
+  project_type: string;
+  detected_pm?: string;
+  run_command?: string;
+  launch_port?: number;
+  env_vars?: Record<string, string>;
+  version_constraints?: Record<string, string>;
+}
+
+export class LocalInstaller {
+  private proc: cp.ChildProcess | null = null;
+  private cancelled = false;
+  private lastLaunchPort: number | undefined;
+  private static readonly MAX_LAUNCH_RECOVERY_ATTEMPTS = 4;
+  private readonly djangoPreparedPaths = new Set<string>();
+  private readonly djangoStaticPreparedPaths = new Set<string>();
+  private lastCommandOutput = '';
+  private backendSessionExpired = false;
+  private mappedWebserverPort: number | null = null;
+
+  constructor(
+    private readonly apiClient: AxiosInstance,
+    private readonly onLog: (msg: string, level?: string) => void,
+    private readonly onRuntimeMissing?: (info: RuntimeMissingInfo) => Promise<void> | void,
+    private readonly onConflictResolution?: (
+      info: ConflictResolutionInfo,
+    ) => Promise<ConflictResolutionChoice> | ConflictResolutionChoice,
+    private readonly onDockerImagePullApproval?: (
+      image: string,
+    ) => Promise<boolean> | boolean,
+  ) {}
+
+      private async getComposeServices(cwd: string, composeFile: string): Promise<string[]> {
+        const servicesResult = await this.execAndCaptureResult(
+          `docker compose -f "${composeFile}" config --services`,
+          cwd,
+        );
+        if (!servicesResult.ok) {
+          return [];
+        }
+        return servicesResult.output
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean);
+      }
+
+      private shouldSkipAuxiliaryService(serviceHostPath: string, svc: ServiceInstallSpec): boolean {
+        const marker = `${svc.path ?? ''} ${svc.name ?? ''}`.toLowerCase();
+        const auxiliaryHints = ['docs', 'doc', 'documentation', 'test', 'tests', 'example', 'examples'];
+        const looksAuxiliary = auxiliaryHints.some((hint) => marker.includes(hint));
+        if (!looksAuxiliary) {
+          return false;
+        }
+
+        if (svc.project_type !== 'python') {
+          return true;
+        }
+
+        if (typeof svc.run_command === 'string' && svc.run_command.trim().length > 0) {
+          const normalized = svc.run_command.toLowerCase();
+          if (
+            normalized.includes('manage.py')
+            || normalized.includes('uvicorn')
+            || normalized.includes('gunicorn')
+            || normalized.includes('flask run')
+            || normalized.includes('streamlit run')
+          ) {
+            return false;
+          }
+        }
+
+        const runtimeEntrypoints = ['manage.py', 'main.py', 'app.py', 'run.py', 'server.py', 'wsgi.py', 'asgi.py'];
+        const hasRuntimeEntrypoint = runtimeEntrypoints.some((entry) => fs.existsSync(path.join(serviceHostPath, entry)));
+        return !hasRuntimeEntrypoint;
+      }
+
+  private async installSingle(ctx: InstallContext, reportComplete: boolean): Promise<boolean> {
+    try {
+      await this.reportProgress(ctx.projectId, 10, `Checking environment (${ctx.projectType})`);
+      const useVenv = await this.checkConflicts(ctx);
+
+      await this.reportProgress(ctx.projectId, 30, `Installing dependencies (${ctx.projectType})`);
+      const installOk = await this.runInstall(ctx, useVenv);
+      if (!installOk) {
+        if (this.cancelled && reportComplete) {
+          await this.reportComplete(ctx.projectId, false, undefined, 'Installation cancelled by user.');
+        }
+        return false;
+      }
+
+      if (this.cancelled) {
+        if (reportComplete) {
+          await this.reportComplete(ctx.projectId, false, undefined, 'Installation cancelled by user.');
+        }
+        return false;
+      }
+
+      await this.reportProgress(ctx.projectId, 80, `Writing configuration (${ctx.projectType})`);
+      await this.writeEnvFile(ctx);
+
+      await this.reportProgress(ctx.projectId, 90, `Launching application (${ctx.projectType})`);
+      const port = await this.launch(ctx, useVenv);
+      this.lastLaunchPort = port;
+
+      if (reportComplete) {
+        await this.reportComplete(ctx.projectId, true, port);
+      }
+      return true;
+    } catch (err: any) {
+      if (err instanceof DockerFallbackRequestedError) {
+        try {
+          const dockerPort = await this.runDockerFallback(ctx);
+          this.lastLaunchPort = dockerPort;
+          if (reportComplete) {
+            await this.reportComplete(ctx.projectId, true, dockerPort);
+          }
+          return true;
+        } catch (dockerErr: any) {
+          if (reportComplete) {
+            await this.reportComplete(ctx.projectId, false, undefined, dockerErr?.message ?? 'Docker fallback failed');
+          }
+          this.onLog(`[Error] Docker fallback failed: ${dockerErr?.message ?? dockerErr}`, 'error');
+          return false;
+        }
+      }
+
+      this.onLog(`[Error] ${err?.message ?? err}`, 'error');
+      if (reportComplete) {
+        await this.reportComplete(ctx.projectId, false, undefined, err?.message);
+      }
+      return false;
+    }
+  }
+
+  private normalizeServices(ctx: InstallContext): ServiceInstallSpec[] {
+    if (!Array.isArray(ctx.services) || ctx.services.length === 0) {
+      return [];
+    }
+
+    return ctx.services
+      .filter((svc) => svc && typeof svc.project_type === 'string' && svc.project_type.trim().length > 0)
+      .map((svc) => ({
+        ...svc,
+        project_type: svc.project_type.trim(),
+      }));
+  }
+
+  private resolveServiceHostPath(rootPath: string, servicePath?: string): string {
+    if (!servicePath || servicePath === '.' || servicePath.trim() === '') {
+      return rootPath;
+    }
+
+    if (path.isAbsolute(servicePath)) {
+      return servicePath;
+    }
+
+    return path.join(rootPath, servicePath);
+  }
+
+  cancel(): void {
+    this.cancelled = true;
+    if (this.proc && !this.proc.killed) {
+      this.proc.kill('SIGTERM');
+    }
+  }
+
+  wasCancelled(): boolean {
+    return this.cancelled;
+  }
+
+  getLastLaunchPort(): number | undefined {
+    return this.lastLaunchPort;
+  }
+
+  // ── Private: conflict check ──────────────────────────────────────
+
+  private async checkConflicts(ctx: InstallContext): Promise<boolean> {
+    let useVenv = false;
+    const requestedPort = ctx.launchPort ?? this.defaultPort(ctx.projectType);
+
+    // ── Static HTML: no runtime to check — skip straight to port check ──
+    if (ctx.projectType === 'static') {
+      const requestedPortAvailable = await this.isPortAvailable(requestedPort);
+      if (!requestedPortAvailable) {
+        const fallbackPort = await this.findAvailablePort(requestedPort + 1);
+        if (fallbackPort) {
+          ctx.launchPort = fallbackPort;
+          this.onLog(`[Conflict] Port ${requestedPort} is already in use. Reassigned launch port to ${fallbackPort}`);
+        } else {
+          throw new Error(`Port ${requestedPort} is already in use and no fallback port could be reserved`);
+        }
+      } else {
+        ctx.launchPort = requestedPort;
+        this.onLog(`[Info] Port ${requestedPort} is available for launch`);
+      }
+      return false; // useVenv = false — not applicable for static
+    }
+
+    const toolChecks: Record<string, { cmd: string; install: string }> = {
+      nodejs: { cmd: 'node', install: 'https://nodejs.org' },
+      python: { cmd: 'python', install: 'https://python.org' },
+      php: { cmd: 'php', install: 'https://php.net' },
+      java: { cmd: 'java', install: 'https://adoptium.net' },
+      ruby: { cmd: 'ruby', install: 'https://www.ruby-lang.org' },
+      go: { cmd: 'go', install: 'https://go.dev' },
+    };
+
+    const toolCheck = toolChecks[ctx.projectType];
+    if (toolCheck) {
+      while (true) {
+        const version = await this.getVersion(toolCheck.cmd, '--version');
+        if (version) {
+          this.onLog(`[Info] ${toolCheck.cmd} ${version} detected`);
+          break;
+        }
+
+        const message =
+          `${toolCheck.cmd} is not installed or not in PATH. Install it from ${toolCheck.install} then try again.`;
+        const choice = await this.resolveConflict({
+          component: toolCheck.cmd,
+          projectType: ctx.projectType,
+          message,
+          installUrl: toolCheck.install,
+        });
+
+        if (choice === 'docker') {
+          throw new DockerFallbackRequestedError(`User chose Docker for ${ctx.projectType}.`);
+        }
+
+        this.onLog(`[Info] Retrying ${toolCheck.cmd} check after user resolution...`);
+      }
+    }
+
+    if (ctx.projectType === 'python') {
+      const localVersion = await this.getVersion('python', '--version');
+      const required = ctx.versionConstraints?.python;
+      if (required && localVersion) {
+        const localMajor = parseInt(localVersion.split('.')[0]);
+        const reqMajor = parseInt(required.replace(/[^0-9.]/g, '').split('.')[0]);
+        if (localMajor < reqMajor) {
+          this.onLog(`[Warning] Python ${localVersion} found, ${required} required — using venv`);
+          useVenv = true;
+        }
+      }
+      useVenv = true;
+    }
+
+    if (ctx.projectType === 'nodejs') {
+      await this.checkNodePmAvailable(ctx.hostPath);
+    }
+
+    if (ctx.projectType === 'java') {
+      const mvnOrGradle = await this.resolveJavaBuildTool(ctx.hostPath);
+      if (!mvnOrGradle) {
+        const choice = await this.resolveConflict({
+          component: 'mvn/gradle',
+          projectType: ctx.projectType,
+          message: 'Neither Maven (mvn) nor Gradle was found. Install one and retry.',
+          installUrl: 'https://maven.apache.org',
+        });
+
+        if (choice === 'docker') {
+          throw new DockerFallbackRequestedError('User chose Docker for java project.');
+        }
+
+        const retryTool = await this.resolveJavaBuildTool(ctx.hostPath);
+        if (!retryTool) {
+          throw new Error('Neither Maven (mvn) nor Gradle was found after retry.');
+        }
+      }
+    }
+
+    if (ctx.projectType === 'ruby') {
+      const bundler = await this.commandExists('bundle');
+      if (!bundler) {
+        if (await this.commandExists('gem')) {
+          this.onLog('[Info] bundler not found, installing...');
+          const bundlerOk = await this.runCommand('gem install bundler', ctx.hostPath, ctx.projectId);
+          if (!bundlerOk) {
+            throw new Error('Failed to install bundler. Install Ruby bundler manually and try again.');
+          }
+        } else {
+          const choice = await this.resolveConflict({
+            component: 'bundler',
+            projectType: ctx.projectType,
+            message: 'bundler is not installed and gem is unavailable. Install Ruby Bundler and retry.',
+            installUrl: 'https://bundler.io',
+          });
+
+          if (choice === 'docker') {
+            throw new DockerFallbackRequestedError('User chose Docker for ruby project.');
+          }
+
+          if (!(await this.commandExists('bundle'))) {
+            throw new Error('bundler is still unavailable after retry.');
+          }
+        }
+      }
+    }
+
+    const requestedPortAvailable = await this.isPortAvailable(requestedPort);
+    if (!requestedPortAvailable) {
+      const fallbackPort = await this.findAvailablePort(requestedPort + 1);
+      if (fallbackPort) {
+        ctx.launchPort = fallbackPort;
+        this.onLog(`[Conflict] Port ${requestedPort} is already in use. Reassigned launch port to ${fallbackPort}`);
+      } else {
+        throw new Error(`Port ${requestedPort} is already in use and no fallback port could be reserved`);
+      }
+    } else {
+      ctx.launchPort = requestedPort;
+      this.onLog(`[Info] Port ${requestedPort} is available for launch`);
+    }
+
+    return useVenv;
+  }
+
+  // ── Private: install dependencies ───────────────────────────────
+
+  private async runInstall(ctx: InstallContext, useVenv: boolean): Promise<boolean> {
+    const cwd = ctx.hostPath;
+    this.onLog(`[Debug] runInstall: checking path ${cwd} for project type ${ctx.projectType}`);
+
+    // ── Static HTML: no dependencies to install ──────────────────
+    if (ctx.projectType === 'static') {
+      this.onLog('[Info] Static HTML project — no dependencies to install');
+      return true;
+    }
+
+    const pythonBin = this.resolvePythonBin(cwd, useVenv);
+    this.onLog(`[Debug] Resolved python: ${pythonBin}`);
+
+    if (ctx.projectType === 'nodejs') {
+      if (!fs.existsSync(path.join(cwd, 'package.json'))) {
+        this.onLog('[Warning] No package.json found, skipping npm install');
+        return true;
+      }
+      const pm = this.detectNodePm(cwd);
+      this.onLog(`[Info] Package manager: ${pm}`);
+      return await this.runCommand(`${pm} install`, cwd, ctx.projectId);
+    }
+
+    if (ctx.projectType === 'python') {
+      const hasPyproject = fs.existsSync(path.join(cwd, 'pyproject.toml'));
+      const hasPipfile   = fs.existsSync(path.join(cwd, 'Pipfile'));
+      const hasReqs      = fs.existsSync(path.join(cwd, 'requirements.txt'));
+      const hasSetupPy   = fs.existsSync(path.join(cwd, 'setup.py'));
+
+      this.onLog(`[Debug] Python dep files: pyproject.toml=${hasPyproject}, Pipfile=${hasPipfile}, requirements.txt=${hasReqs}, setup.py=${hasSetupPy}`);
+
+      if (!hasPyproject && !hasPipfile && !hasReqs && !hasSetupPy) {
+        this.onLog('[Warning] No dependency file found (requirements.txt / pyproject.toml / Pipfile / setup.py). Skipping install.');
+        return true;
+      }
+
+      if (hasPyproject) {
+        const poetryOk = await this.commandExists('poetry');
+        if (poetryOk) {
+          this.onLog('[Info] Package manager: poetry');
+          return await this.runCommand('poetry install', cwd, ctx.projectId);
+        }
+        this.onLog('[Warning] pyproject.toml found but poetry not installed, falling back to pip');
+      }
+
+      if (hasPipfile) {
+        const pipenvOk = await this.commandExists('pipenv');
+        if (pipenvOk) {
+          this.onLog('[Info] Package manager: pipenv');
+          return await this.runCommand('pipenv install', cwd, ctx.projectId);
+        }
+        this.onLog('[Warning] Pipfile found but pipenv not installed, falling back to pip');
+      }
+
+      if (useVenv) {
+        if (this.hasUsableVenv(cwd)) {
+          this.onLog('[Info] Reusing existing .venv');
+        } else {
+          const venvCmd = `${this.resolvePythonBin(cwd, false)} -m venv .venv`;
+          const venvOk = await this.runCommand(venvCmd, cwd, ctx.projectId);
+          if (!venvOk) {
+            if (this.hasUsableVenv(cwd)) {
+              this.onLog(
+                '[Warning] .venv recreation failed (likely file lock). Continuing with existing .venv.',
+                'warning',
+              );
+            } else {
+              return false;
+            }
+          }
+        }
+      }
+
+      if (hasReqs) {
+        return await this.pipInstallWithFallback(cwd, ctx.projectId);
+      }
+
+      if (hasPyproject || hasSetupPy) {
+        this.onLog('[Info] Installing project dependencies from local package metadata (pyproject/setup.py) using pip');
+        return await this.pipInstallProjectWithFallback(cwd, ctx.projectId);
+      }
+
+      return true;
+    }
+
+    if (ctx.projectType === 'php') {
+      if (!fs.existsSync(path.join(cwd, 'composer.json'))) {
+        this.onLog('[Warning] No composer.json found, skipping composer install');
+        return true;
+      }
+      if (!(await this.commandExists('composer'))) {
+        throw new Error('composer is not installed. Install it from https://getcomposer.org then try again.');
+      }
+      this.onLog('[Info] Package manager: composer');
+      const composerOk = await this.runCommand('composer install', cwd, ctx.projectId);
+      if (!composerOk) {
+        return false;
+      }
+
+      if (fs.existsSync(path.join(cwd, 'artisan'))) {
+        await this.prepareLaravelProject(cwd, ctx.projectId);
+      }
+
+      return true;
+    }
+
+    if (ctx.projectType === 'java') {
+      const tool = await this.resolveJavaBuildTool(cwd);
+      if (!tool) {
+        throw new Error('No Java build tool found. Install Maven or Gradle and try again.');
+      }
+
+      this.onLog(`[Info] Build tool: ${tool}`);
+
+      if (tool === 'gradle') {
+        const javaVersion = await this.getVersion('java', '--version');
+        const gradleVersion = await this.getGradleVersion(cwd);
+        this.onLog(`[Info] Gradle preflight: wrapper ${gradleVersion ?? 'unknown'}, java ${javaVersion ?? 'unknown'}`);
+
+        if (this.isGradleJavaIncompatible(gradleVersion, javaVersion)) {
+          const incompatMessage =
+            `Gradle ${gradleVersion ?? 'unknown'} is incompatible with Java ${javaVersion ?? 'unknown'}. ` +
+            `Use Java 11 for this project, or upgrade Gradle wrapper to 7.3+ (8+ recommended).`;
+
+          const choice = await this.resolveConflict({
+            component: 'gradle/java',
+            projectType: ctx.projectType,
+            message: incompatMessage,
+            installUrl: 'https://docs.gradle.org/current/userguide/compatibility.html',
+          });
+
+          if (choice === 'docker') {
+            throw new DockerFallbackRequestedError('User chose Docker for gradle/java incompatibility.');
+          }
+
+          const javaRetry = await this.getVersion('java', '--version');
+          const gradleRetry = await this.getGradleVersion(cwd);
+          if (this.isGradleJavaIncompatible(gradleRetry, javaRetry)) {
+            throw new Error(incompatMessage);
+          }
+        }
+      }
+
+      if (tool === 'maven') {
+        return await this.runCommand('mvn dependency:resolve -q', cwd, ctx.projectId);
+      }
+
+      const gradlew = this.gradleWrapper(cwd);
+      return await this.runCommand(`${gradlew} dependencies --configuration runtimeClasspath -q`, cwd, ctx.projectId);
+    }
+
+    if (ctx.projectType === 'ruby') {
+      if (!fs.existsSync(path.join(cwd, 'Gemfile'))) {
+        this.onLog('[Warning] No Gemfile found, skipping bundler install');
+        return true;
+      }
+      this.onLog('[Info] Package manager: bundler');
+      return await this.runCommand('bundle install', cwd, ctx.projectId);
+    }
+
+    if (ctx.projectType === 'go') {
+      if (!fs.existsSync(path.join(cwd, 'go.mod'))) {
+        this.onLog('[Warning] No go.mod found, skipping go mod download');
+        return true;
+      }
+      this.onLog('[Info] Package manager: go modules');
+      return await this.runCommand('go mod download', cwd, ctx.projectId);
+    }
+
+    return true;
+  }
+
+  private async pipInstallWithFallback(cwd: string, projectId: string): Promise<boolean> {
+    const reqFile = path.join(cwd, 'requirements.txt');
+    if (!fs.existsSync(reqFile)) {
+      this.onLog('[Warning] No requirements.txt found, skipping pip install');
+      return true;
+    }
+
+    const pip = this.getPipCmd(cwd);
+    this.onLog(`[Debug] Using pip: ${pip}`);
+    this.onLog(`[Debug] Running: ${pip} install -r requirements.txt`);
+    const ok = await this.runCommand(`${pip} install -r requirements.txt`, cwd, projectId);
+    this.onLog(`[Debug] Pip install result: ok=${ok}`);
+    if (ok) return true;
+
+    this.onLog('[Info] Retrying with individual package installs...');
+    const lines = fs.readFileSync(reqFile, 'utf8').split('\n');
+    for (const line of lines) {
+      const pkg = line.trim();
+      if (!pkg || pkg.startsWith('#')) continue;
+
+      const pinOk = await this.runCommand(`${pip} install "${pkg}"`, cwd, projectId);
+      if (!pinOk) {
+        const name = pkg.split(/[>=<!~[]/)[0].trim();
+        this.onLog(`[Fallback] ${pkg} failed, trying unpinned: ${name}`);
+        await this.runCommand(`${pip} install "${name}"`, cwd, projectId);
+      }
+    }
+    return true;
+  }
+
+  private async pipInstallProjectWithFallback(cwd: string, projectId: string): Promise<boolean> {
+    const pip = this.getPipCmd(cwd);
+
+    let ok = await this.runCommand(`${pip} install -e .`, cwd, projectId);
+    if (ok) {
+      return true;
+    }
+
+    this.onLog('[Fallback] Editable install failed, retrying with standard package install...');
+    ok = await this.runCommand(`${pip} install .`, cwd, projectId);
+    return ok;
+  }
+
+  private async prepareLaravelProject(cwd: string, projectId: string): Promise<void> {
+    this.onLog('[Info] Detected Laravel project. Running framework setup steps...');
+
+    const envPath = path.join(cwd, '.env');
+    const envExamplePath = path.join(cwd, '.env.example');
+    if (!fs.existsSync(envPath) && fs.existsSync(envExamplePath)) {
+      fs.copyFileSync(envExamplePath, envPath);
+      this.onLog('[Info] Created .env from .env.example');
+    }
+
+    const keyOk = await this.runCommand('php artisan key:generate --force', cwd, projectId);
+    if (!keyOk) {
+      this.onLog('[Warning] Laravel app key generation failed. Launch may fail until APP_KEY is configured.', 'warning');
+    }
+
+    const migrateOk = await this.runCommand('php artisan migrate --seed --force', cwd, projectId);
+    if (!migrateOk) {
+      this.onLog('[Warning] Laravel migrations/seeding failed. Continuing launch; app may have limited functionality until DB is configured.', 'warning');
+    }
+
+    if (fs.existsSync(path.join(cwd, 'package.json'))) {
+      const npmInstallCmd = fs.existsSync(path.join(cwd, 'package-lock.json')) ? 'npm ci' : 'npm install';
+      const npmOk = await this.runCommand(npmInstallCmd, cwd, projectId);
+      if (!npmOk) {
+        this.onLog('[Warning] Frontend dependency install failed. Continuing with backend launch.', 'warning');
+        return;
+      }
+
+      const assetOk = await this.runCommand('npm run dev', cwd, projectId);
+      if (!assetOk) {
+        this.onLog('[Warning] Frontend asset compilation failed. Continuing with backend launch.', 'warning');
+      }
+    }
+
+    const storageLinkOk = await this.runCommand('php artisan storage:link', cwd, projectId);
+    if (!storageLinkOk) {
+      this.onLog('[Warning] Could not create Laravel storage symlink. Uploaded images may not be served.', 'warning');
+    }
+  }
+
+  // ── Private: .env writing ────────────────────────────────────────
+
+  private async writeEnvFile(ctx: InstallContext): Promise<void> {
+    if (!ctx.envVars || Object.keys(ctx.envVars).length === 0) return;
+
+    const envPath = path.join(ctx.hostPath, '.env');
+    const examplePath = path.join(ctx.hostPath, '.env.example');
+
+    let existing: Record<string, string> = {};
+    if (fs.existsSync(examplePath)) {
+      const lines = fs.readFileSync(examplePath, 'utf8').split('\n');
+      for (const line of lines) {
+        const match = line.match(/^([^=]+)=(.*)$/);
+        if (match) existing[match[1].trim()] = match[2].trim();
+      }
+    }
+
+    const merged = { ...existing, ...ctx.envVars };
+    const content = Object.entries(merged)
+      .map(([k, v]) => `${k}=${v}`)
+      .join('\n');
+
+    fs.writeFileSync(envPath, content, 'utf8');
+    this.onLog(`[Info] Written .env (${Object.keys(merged).length} variables)`);
+  }
+
+  // ── Private: launch ──────────────────────────────────────────────
+
+  private async launch(
+    ctx: InstallContext,
+    useVenv: boolean,
+    recoveryAttempt: number = 0,
+    manualPromptAttempted: boolean = false,
+    attemptedModuleRecoveries: Set<string> = new Set(),
+  ): Promise<number> {
+    const cwd = ctx.hostPath;
+    const launchLogs: string[] = [];
+    let cmd = '';
+    let port = ctx.launchPort ?? this.defaultPort(ctx.projectType);
+
+    const pushLaunchLog = (line: string): void => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      launchLogs.push(trimmed);
+      if (launchLogs.length > 250) launchLogs.shift();
+    };
+
+    try {
+      cmd = await this.resolveRunCommand(ctx, useVenv);
+      port = await this.resolvePort(ctx);
+
+      await this.prepareDjangoBeforeLaunch(ctx, cwd, useVenv, cmd, attemptedModuleRecoveries);
+
+      this.onLog(`[Launch] Starting: ${cmd}`);
+      this.onLog(`[Launch] cwd: ${cwd}`);
+      this.onLog(`[Launch] port: ${port}`);
+
+      const launchEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        PORT: String(port),
+      };
+
+      if (ctx.projectType === 'python' && this.isDjangoRunserverCommand(cmd)) {
+        if (!launchEnv.WHITENOISE_MANIFEST_STRICT) {
+          launchEnv.WHITENOISE_MANIFEST_STRICT = 'false';
+          this.onLog('[Launch] Set WHITENOISE_MANIFEST_STRICT=false for local Django runserver stability.');
+        }
+      }
+
+      if (await this.shouldSkipCraPreflight(cwd, cmd)) {
+        launchEnv.SKIP_PREFLIGHT_CHECK = 'true';
+        this.onLog('[Info] Enabled CRA preflight bypass for this launch');
+      }
+
+      if (await this.shouldEnableLegacyOpenSsl(cwd, cmd)) {
+        launchEnv.NODE_OPTIONS = `${launchEnv.NODE_OPTIONS ?? ''} --openssl-legacy-provider`.trim();
+        this.onLog('[Info] Enabled legacy OpenSSL provider for this launch');
+      }
+
+      this.proc = cp.spawn(cmd, [], {
+        cwd,
+        shell: true,
+        detached: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: launchEnv,
+      });
+
+      this.proc.stdout?.on('data', (d: Buffer) =>
+        d.toString().split('\n').filter(Boolean)
+          .forEach(line => {
+            const trimmed = line.trim();
+            pushLaunchLog(trimmed);
+            this.onLog(trimmed);
+          })
+      );
+      this.proc.stderr?.on('data', (d: Buffer) =>
+        d.toString().split('\n').filter(Boolean)
+          .forEach(line => {
+            const trimmed = line.trim();
+            pushLaunchLog(trimmed);
+            this.onLog(trimmed, 'stderr');
+          })
+      );
+
+      await new Promise(r => setTimeout(r, 2000));
+      if (this.proc.exitCode !== null && this.proc.exitCode !== 0) {
+        throw new Error(
+          `Process exited immediately with code ${this.proc.exitCode}. ` +
+          `Check the output above for errors.`
+        );
+      }
+
+      // ── Static sites: no port readiness check needed ──────────
+      if (ctx.projectType === 'static') {
+        this.onLog(`[Info] Static site served at http://localhost:${port}`);
+        return port;
+      }
+
+      const shouldWaitForPort = this.shouldWaitForPort(ctx.projectType, cmd);
+      if (!shouldWaitForPort) {
+        this.onLog('[Info] Skipping port readiness check for non-server command.');
+        return port;
+      }
+
+      const waitTimeoutMs = (ctx.projectType === 'java' || ctx.projectType === 'go') ? 60_000 : 30_000;
+      const bound = await this.waitForPort(port, waitTimeoutMs);
+      if (!bound) {
+        if (this.proc.exitCode !== null && this.proc.exitCode !== 0) {
+          throw new Error(`Process exited with code ${this.proc.exitCode}`);
+        }
+        throw new Error(
+          `Application did not bind to port ${port} after ${Math.round(waitTimeoutMs / 1000)}s. ` +
+          `Check logs above for startup errors.`
+        );
+      }
+
+      if (
+        ctx.projectType === 'python'
+        && recoveryAttempt < LocalInstaller.MAX_LAUNCH_RECOVERY_ATTEMPTS
+        && !this.cancelled
+      ) {
+        const health = await this.verifyPythonHttpHealth(port);
+        if (!health.healthy) {
+          const healthDetail = `[Launch][Health] ${health.detail ?? 'Python service returned unhealthy response.'}`;
+          pushLaunchLog(healthDetail);
+          this.onLog(healthDetail, 'warning');
+
+          await this.reportLaunchErrorForLearning(ctx, cmd, healthDetail, launchLogs.join('\n'));
+
+          const recoveredMissingModule = await this.tryRecoverMissingPythonModule(
+            ctx, cwd, `${healthDetail}\n${launchLogs.join('\n')}`, attemptedModuleRecoveries,
+          );
+          const recoveredStaticManifest = await this.tryRecoverDjangoStaticManifestError(
+            ctx, cwd, useVenv, `${healthDetail}\n${launchLogs.join('\n')}`, cmd,
+          );
+          if (recoveredMissingModule || recoveredStaticManifest) {
+            if (this.proc && !this.proc.killed && this.proc.exitCode === null) {
+              this.proc.kill('SIGTERM');
+            }
+            this.onLog('[Launch] Retrying launch after post-start Python health recovery...');
+            return this.launch(ctx, useVenv, recoveryAttempt + 1, manualPromptAttempted, attemptedModuleRecoveries);
+          }
+
+          throw new Error(`Python service failed health check after launch: ${health.detail ?? 'HTTP health probe failed'}`);
+        }
+      }
+
+      return port;
+    } catch (err: any) {
+      const errorMessage = String(err?.message ?? err ?? 'Unknown launch error');
+      const combinedLaunchError = `${errorMessage}\n${launchLogs.join('\n')}`;
+
+      // ── Handle Python library projects without runnable entry point ────────
+      if (err instanceof PythonLibraryProjectError) {
+        this.onLog(`[Info] ${errorMessage}`, 'info');
+        this.onLog(`[Info] Installation completed successfully. Library "${err.packageName}" is ready for import.`);
+        return ctx.launchPort ?? this.defaultPort(ctx.projectType);
+      }
+
+      await this.reportLaunchErrorForLearning(ctx, cmd, combinedLaunchError, launchLogs.join('\n'));
+
+      if (
+        !manualPromptAttempted
+        && !this.cancelled
+        && ctx.projectType === 'python'
+        && this.isMissingPythonEntryPointError(combinedLaunchError)
+      ) {
+        const userFixed = await this.promptUserToAddPythonEntryPoint(ctx, useVenv, combinedLaunchError);
+        if (userFixed) {
+          this.onLog('[Launch] Retrying launch after manual Python entry-point update...');
+          return this.launch(ctx, useVenv, recoveryAttempt, true, attemptedModuleRecoveries);
+        }
+      }
+
+      if (
+        !this.cancelled
+        && ctx.projectType === 'python'
+        && this.isManualPythonCodeFixRequiredError(combinedLaunchError)
+      ) {
+        const userFixed = await this.promptUserToFixPythonCode(ctx, useVenv, combinedLaunchError);
+        if (userFixed) {
+          this.onLog('[Launch] Retrying launch after manual Python code fix...');
+          return this.launch(ctx, useVenv, recoveryAttempt, manualPromptAttempted, attemptedModuleRecoveries);
+        }
+      }
+
+      if (
+        recoveryAttempt < LocalInstaller.MAX_LAUNCH_RECOVERY_ATTEMPTS
+        && !this.cancelled
+        && ctx.projectType === 'python'
+      ) {
+        const recoveredMissingModule = await this.tryRecoverMissingPythonModule(
+          ctx, cwd, combinedLaunchError, attemptedModuleRecoveries,
+        );
+        const recoveredStaticManifest = await this.tryRecoverDjangoStaticManifestError(
+          ctx, cwd, useVenv, combinedLaunchError, cmd,
+        );
+        if (recoveredMissingModule || recoveredStaticManifest) {
+          this.onLog('[Launch] Retrying launch after Python module recovery...');
+          return this.launch(ctx, useVenv, recoveryAttempt + 1, manualPromptAttempted, attemptedModuleRecoveries);
+        }
+      }
+
+      if (recoveryAttempt < LocalInstaller.MAX_LAUNCH_RECOVERY_ATTEMPTS && !this.cancelled) {
+        const recoveryResult = await this.tryLaunchRecovery(
+          ctx, cwd, cmd, errorMessage, launchLogs.join('\n'), attemptedModuleRecoveries,
+        );
+        if (recoveryResult.recovered) {
+          if (this.proc && !this.proc.killed && this.proc.exitCode === null) {
+            this.proc.kill('SIGTERM');
+          }
+          this.onLog('[Launch] Retrying launch after recovery fix...');
+          return this.launch(ctx, useVenv, recoveryAttempt + 1, manualPromptAttempted, attemptedModuleRecoveries);
+        }
+      }
+
+      throw err;
+    }
+  }
+
+  // ── resolveRunCommand — static case added ────────────────────────
+
+  private async resolveRunCommand(
+    ctx: InstallContext,
+    useVenv: boolean,
+    specifiedFile?: string,
+  ): Promise<string> {
+    const cwd = ctx.hostPath;
+
+    // ── Static HTML/CSS/JS ────────────────────────────────────────
+    // python -m http.server works on Windows, macOS, and Linux
+    // with no extra packages required.
+    if (ctx.projectType === 'static') {
+      const port = await this.resolvePort(ctx);
+      const entryFile = this.findStaticEntryPoint(cwd);
+      this.onLog(`[Info] Static site entry: ${entryFile ?? 'index.html'}`);
+      return `python -m http.server ${port}`;
+    }
+
+    // ── rest of the method is unchanged ──────────────────────────
+
+    if (specifiedFile && ctx.projectType === 'python') {
+      const normalizedSpecifiedFile = this.normalizeSpecifiedPythonFile(specifiedFile);
+      const pythonBin = this.resolvePythonBin(cwd, useVenv);
+
+      const disallowedEntryFiles = new Set(['setup.py', 'conftest.py', '__init__.py']);
+      const specifiedBase = path.basename(normalizedSpecifiedFile).toLowerCase();
+      if (disallowedEntryFiles.has(specifiedBase)) {
+        if (specifiedBase === 'setup.py') {
+          const managePy = await this.findFileRecursive(cwd, 'manage.py', 5);
+          if (managePy) {
+            const port = await this.resolvePort(ctx);
+            this.onLog(`[Launch] "${normalizedSpecifiedFile}" is a packaging script. Using detected Django entry: ${managePy}`, 'warning');
+            return `${pythonBin} ${managePy} runserver 0.0.0.0:${port}`;
+          }
+        }
+        throw new Error(`"${normalizedSpecifiedFile}" is not a runnable app entry file. Use a server entry like manage.py, app.py, main.py, run.py, or server.py.`);
+      }
+
+      if (!specifiedBase.endsWith('.py')) {
+        throw new Error(`"${normalizedSpecifiedFile}" is not a Python file. Please provide a .py entry file path.`);
+      }
+
+      const specifiedPath = path.isAbsolute(normalizedSpecifiedFile)
+        ? normalizedSpecifiedFile
+        : path.join(cwd, normalizedSpecifiedFile);
+      if (fs.existsSync(specifiedPath)) {
+        return `${pythonBin} ${specifiedPath}`;
+      }
+
+      const hasPathSeparator = normalizedSpecifiedFile.includes('/') || normalizedSpecifiedFile.includes('\\');
+      if (!path.isAbsolute(normalizedSpecifiedFile) && !hasPathSeparator) {
+        const discovered = await this.findFileRecursive(cwd, normalizedSpecifiedFile, 5);
+        if (discovered) return `${pythonBin} ${discovered}`;
+      }
+
+      throw new Error(`Specified Python entry file not found: ${normalizedSpecifiedFile} (looked in ${specifiedPath})`);
+    }
+
+    const normalizedRunCommand = (ctx.runCommand ?? '').trim();
+    if (normalizedRunCommand.length > 0) {
+      if (ctx.projectType === 'nodejs') {
+        const pkg = path.join(cwd, 'package.json');
+        if (fs.existsSync(pkg)) {
+          const scripts = JSON.parse(fs.readFileSync(pkg, 'utf8')).scripts ?? {};
+          const scriptMatch = normalizedRunCommand.match(/^(?:npm|pnpm|yarn)\s+(?:run\s+)?([\w:-]+)$/i);
+          if (scriptMatch) {
+            const scriptName = scriptMatch[1];
+            if (!scripts[scriptName]) {
+              this.onLog(`[Warning] Backend run command "${normalizedRunCommand}" references missing script "${scriptName}". Falling back to detected scripts.`);
+            } else {
+              const buildAwareCommand = this.augmentNodeStartCommand(cwd, normalizedRunCommand, scripts);
+              return buildAwareCommand ?? normalizedRunCommand;
+            }
+          } else {
+            return this.augmentNodeStartCommand(cwd, normalizedRunCommand, scripts) ?? normalizedRunCommand;
+          }
+        } else {
+          return normalizedRunCommand;
+        }
+      } else if (ctx.projectType === 'python') {
+        if (this.pythonRunCommandTargetsMissingScript(cwd, normalizedRunCommand)) {
+          this.onLog(`[Warning] Backend run command "${normalizedRunCommand}" points to a missing Python entry file. Falling back to detected Python entrypoint.`, 'warning');
+        } else {
+          return await this.normalizePythonRunCommand(cwd, useVenv, ctx, normalizedRunCommand);
+        }
+      } else {
+        return normalizedRunCommand;
+      }
+    }
+
+    if (ctx.projectType === 'nodejs') {
+      const pm = this.detectNodePm(cwd);
+      const pkg = path.join(cwd, 'package.json');
+      if (fs.existsSync(pkg)) {
+        const scripts = JSON.parse(fs.readFileSync(pkg, 'utf8')).scripts ?? {};
+        if (scripts.start) return this.augmentNodeStartCommand(cwd, `${pm} start`, scripts) ?? `${pm} start`;
+        if (scripts.dev) return `${pm} run dev`;
+        if (scripts.serve) return `${pm} run serve`;
+        if (scripts.preview) return `${pm} run preview`;
+        const scriptNames = Object.keys(scripts);
+        throw new Error(
+          `No runnable Node script found. Expected one of start/dev/serve/preview, but found: ` +
+          (scriptNames.length ? scriptNames.join(', ') : 'none')
+        );
+      }
+      throw new Error('No package.json found to determine Node launch command.');
+    }
+
+    if (ctx.projectType === 'python') {
+      const pythonBin = this.resolvePythonBin(cwd, useVenv);
+      const managePy = await this.findFileRecursive(cwd, 'manage.py');
+      if (managePy) {
+        const port = await this.resolvePort(ctx);
+        return `${pythonBin} ${managePy} runserver 0.0.0.0:${port}`;
+      }
+      for (const f of ['app.py', 'main.py', 'run.py', 'server.py', 'wsgi.py']) {
+        const found = await this.findFileRecursive(cwd, f);
+        if (found) return `${pythonBin} ${found}`;
+      }
+      for (const f of ['asgi.py', 'application.py']) {
+        const found = await this.findFileRecursive(cwd, f);
+        if (found) {
+          const port = await this.resolvePort(ctx);
+          const module = found.replace(/\.py$/, '').replace(/[\\/]/g, '.');
+          return `${pythonBin} -m uvicorn ${module}:app --host 0.0.0.0 --port ${port}`;
+        }
+      }
+      if (await this.requirementsMentions(cwd, 'flask')) {
+        const port = await this.resolvePort(ctx);
+        return `${pythonBin} -m flask run --host=0.0.0.0 --port=${port}`;
+      }
+
+      // ── Check if this is a library project with examples ─────────────────
+      if (this.isPythonLibraryProject(cwd)) {
+        const examples = this.findPythonExamples(cwd);
+        if (examples.length > 0) {
+          const firstExample = examples[0];
+          this.onLog(`[Info] Detected Python library project with examples. This is a package for import, not a standalone app.`, 'info');
+          this.onLog(`[Info] Example entry points found: ${examples.join(', ')}`, 'info');
+          return `${pythonBin} ${firstExample}`;
+        }
+        // Library without examples - don't launch, just mark as complete
+        const packageName = this.extractPackageName(cwd);
+        throw new PythonLibraryProjectError(packageName, 
+          `This is a Python library project with no runnable entry point. ` +
+          `The package "${packageName}" was installed successfully and is ready to be imported. ` +
+          `You can use it in your Python scripts with: \`import ${packageName}\`. ` +
+          `Refer to the project README for usage examples.`
+        );
+      }
+
+      throw new Error(`Cannot determine how to start this Python project. No manage.py, app.py, main.py, or run.py found in ${cwd} or subdirectories.`);
+    }
+
+    if (ctx.projectType === 'php') {
+      if (fs.existsSync(path.join(cwd, 'artisan'))) return `php artisan serve --port=${await this.resolvePort(ctx)}`;
+      if (fs.existsSync(path.join(cwd, 'bin', 'console'))) return `php -S 0.0.0.0:${await this.resolvePort(ctx)} -t public`;
+      const entry = this.findPhpEntry(cwd);
+      return `php -S 0.0.0.0:${await this.resolvePort(ctx)} ${entry}`;
+    }
+
+    if (ctx.projectType === 'java') {
+      const tool = await this.resolveJavaBuildTool(cwd);
+      if (!tool) throw new Error('No Java build tool found for this project');
+      if (tool === 'maven') return 'mvn spring-boot:run -q';
+      const gradlew = this.gradleWrapper(cwd);
+      if (await this.fileContains(cwd, 'build.gradle', 'spring-boot') || await this.fileContains(cwd, 'build.gradle.kts', 'spring-boot')) return `${gradlew} bootRun`;
+      return `${gradlew} run`;
+    }
+
+    if (ctx.projectType === 'ruby') {
+      const port = await this.resolvePort(ctx);
+      if (fs.existsSync(path.join(cwd, 'config', 'application.rb'))) return `bundle exec rails server -p ${port}`;
+      for (const f of ['app.rb', 'main.rb', 'server.rb', 'config.ru']) {
+        if (fs.existsSync(path.join(cwd, f))) {
+          if (f === 'config.ru') return `bundle exec rackup --port ${port}`;
+          return `bundle exec ruby ${f}`;
+        }
+      }
+      throw new Error('Cannot determine Ruby entry point');
+    }
+
+    if (ctx.projectType === 'go') {
+      const mainFile = this.findGoMain(cwd);
+      return mainFile ? `go run ${mainFile}` : 'go run .';
+    }
+
+    throw new Error(`Unsupported project type: ${ctx.projectType}`);
+  }
+
+  // ── Static entry point helper ─────────────────────────────────────
+
+  private findStaticEntryPoint(cwd: string): string | null {
+    for (const candidate of ['index.html', 'index.htm', 'home.html']) {
+      if (fs.existsSync(path.join(cwd, candidate))) return candidate;
+    }
+    const htmlFiles = fs.readdirSync(cwd).filter(f => f.endsWith('.html'));
+    return htmlFiles.length > 0 ? htmlFiles[0] : null;
+  }
+
+  // ── Python library detection ───────────────────────────────────────
+
+  private isPythonLibraryProject(cwd: string): boolean {
+    // Check for setup.py or pyproject.toml indicating a package
+    const hasPackageConfig = fs.existsSync(path.join(cwd, 'setup.py')) || 
+                             fs.existsSync(path.join(cwd, 'pyproject.toml'));
+    if (!hasPackageConfig) {
+      return false;
+    }
+
+    // Check if it's a library: no app entry point but has package structure
+    const appEntryPoints = ['manage.py', 'app.py', 'main.py', 'run.py', 'server.py', 'wsgi.py', 'asgi.py', 'application.py'];
+    const hasAppEntry = appEntryPoints.some(entry => fs.existsSync(path.join(cwd, entry)));
+    
+    // If no app entry and has a package name directory or src structure, it's likely a library
+    const hasPackageDir = this.findPythonPackageDir(cwd) !== null;
+    
+    return !hasAppEntry && hasPackageDir;
+  }
+
+  private findPythonPackageDir(cwd: string): string | null {
+    try {
+      const entries = fs.readdirSync(cwd, { withFileTypes: true });
+      
+      // Look for src/ directory (common Python library structure)
+      const srcDir = entries.find(e => e.isDirectory() && e.name === 'src');
+      if (srcDir) return 'src';
+      
+      // Look for a package directory (named differently from common names)
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const name = entry.name;
+        
+        // Skip common non-package directories
+        if (['tests', 'test', 'examples', 'docs', 'doc', '.git', '__pycache__', 'build', 'dist', '.venv', 'venv'].includes(name)) {
+          continue;
+        }
+        
+        // Check if it has __init__.py (Python package indicator)
+        if (fs.existsSync(path.join(cwd, name, '__init__.py'))) {
+          return name;
+        }
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  private extractPackageName(cwd: string): string {
+    try {
+      const pyprojectPath = path.join(cwd, 'pyproject.toml');
+      const setupPyPath = path.join(cwd, 'setup.py');
+      
+      if (fs.existsSync(pyprojectPath)) {
+        const content = fs.readFileSync(pyprojectPath, 'utf8');
+        const nameMatch = content.match(/name\s*=\s*['"]([\w-]+)['"]/);
+        if (nameMatch) {
+          return nameMatch[1].replace(/-/g, '_');
+        }
+      }
+      
+      if (fs.existsSync(setupPyPath)) {
+        const content = fs.readFileSync(setupPyPath, 'utf8');
+        const nameMatch = content.match(/name\s*=\s*['"]([\w-]+)['"]/);
+        if (nameMatch) {
+          return nameMatch[1].replace(/-/g, '_');
+        }
+      }
+    } catch {
+      // Ignore errors
+    }
+    
+    // Fallback to package directory name
+    const packageDir = this.findPythonPackageDir(cwd);
+    return packageDir || 'package';
+  }
+
+  private findPythonExamples(cwd: string): string[] {
+    const exampleDirs = ['examples', 'example', 'samples', 'sample'];
+    const examples: string[] = [];
+    
+    for (const exampleDir of exampleDirs) {
+      const examplePath = path.join(cwd, exampleDir);
+      if (!fs.existsSync(examplePath)) continue;
+      
+      try {
+        const files = fs.readdirSync(examplePath);
+        for (const file of files) {
+          if (file.endsWith('.py') && !file.startsWith('__')) {
+            const fullPath = path.join(examplePath, file);
+            if (fs.statSync(fullPath).isFile()) {
+              examples.push(fullPath);
+            }
+          }
+        }
+      } catch {
+        // Ignore read errors
+      }
+    }
+    
+    return examples;
+  }
+
+  // ── isUnsafeRecoveryCommand — blocks Unix-only commands on Windows ──
+
+  private isUnsafeRecoveryCommand(argv: string[]): boolean {
+    if (!Array.isArray(argv) || argv.length === 0) return true;
+
+    const joined = argv.map((part) => String(part ?? '').trim()).filter(Boolean).join(' ').toLowerCase();
+    if (!joined) return true;
+
+    const first = String(argv[0] ?? '').toLowerCase().trim();
+    const second = String(argv[1] ?? '').toLowerCase();
+    const third = String(argv[2] ?? '').toLowerCase();
+
+    // ── Block Unix-only shell commands on Windows ─────────────────
+    // Groq sometimes suggests pwd, which, ls etc. as recovery steps.
+    // These are not recognised on Windows and will always fail.
+    if (process.platform === 'win32' && UNIX_ONLY_COMMANDS.has(first)) {
+      this.onLog(`[Launch][Recovery] Skipping Unix-only command on Windows: ${first}`);
+      return true;
+    }
+
+    if (third === 'shell' && /python(?:\.exe)?$/.test(first)) return true;
+
+    if ((first.includes('pip') || (first.includes('python') && second === '-m' && third === 'pip')) && joined.includes(' uninstall ')) return true;
+
+    if (joined.includes('manage.py migrate') && joined.includes('--delete-ghost-migrations')) return true;
+
+    return (
+      joined.includes('npm init') ||
+      joined.includes('npm pkg') ||
+      joined.includes('npm set') ||
+      joined.includes('package.json') ||
+      joined.includes('> package.json')
+    );
+  }
+
+  // ── defaultPort — static added ────────────────────────────────────
+
+  private defaultPort(projectType: string): number {
+    const ports: Record<string, number> = {
+      static:  3000,
+      nodejs:  3000,
+      python:  8000,
+      php:     8000,
+      java:    8080,
+      ruby:    3000,
+      go:      8080,
+    };
+    return ports[projectType] ?? 3000;
+  }
+
+  // ── All remaining methods unchanged from original ─────────────────
+  // (keeping them intact below to avoid breaking any existing behaviour)
+
+  private async prepareDjangoBeforeLaunch(ctx: InstallContext, cwd: string, useVenv: boolean, launchCommand: string, attemptedModuleRecoveries: Set<string>): Promise<void> {
+    if (!this.isDjangoRunserverCommand(launchCommand)) return;
+    const key = cwd.toLowerCase();
+    if (this.djangoPreparedPaths.has(key)) return;
+    const managePy = await this.findFileRecursive(cwd, 'manage.py');
+    if (!managePy) return;
+    const pythonBin = this.resolvePythonBin(cwd, useVenv);
+    this.onLog('[Launch] Detected Django service. Running migrations before launch...');
+    const migrated = await this.runCommand(`${pythonBin} ${managePy} migrate --noinput`, cwd, ctx.projectId);
+    if (!migrated) {
+      if (this.isManualPythonCodeFixRequiredError(this.lastCommandOutput)) {
+        const userFixed = await this.promptUserToFixPythonCode(ctx, useVenv, this.lastCommandOutput);
+        if (userFixed) {
+          this.onLog('[Launch] Retrying Django migrations after manual code fix...');
+          const retryMigratedManual = await this.runCommand(`${pythonBin} ${managePy} migrate --noinput`, cwd, ctx.projectId);
+          if (retryMigratedManual) { this.djangoPreparedPaths.add(key); this.onLog('[Launch] Django migrations completed after manual code fix.'); return; }
+        }
+      }
+      const recoveredMissingModule = await this.tryRecoverMissingPythonModule(ctx, cwd, this.lastCommandOutput, attemptedModuleRecoveries);
+      if (recoveredMissingModule) {
+        this.onLog('[Launch] Retrying Django migrations after dependency recovery...');
+        const retryMigrated = await this.runCommand(`${pythonBin} ${managePy} migrate --noinput`, cwd, ctx.projectId);
+        if (!retryMigrated) { this.onLog('[Warning] Django migration retry still failed after dependency recovery. Continuing launch, but runtime errors may persist.', 'warning'); return; }
+      } else {
+        this.onLog('[Warning] Django migration step failed. Continuing launch, but runtime errors may persist until migrations succeed.', 'warning');
+        return;
+      }
+    }
+    this.djangoPreparedPaths.add(key);
+    this.onLog('[Launch] Django migrations completed.');
+    if (!this.djangoStaticPreparedPaths.has(key)) {
+      this.onLog('[Launch] Running Django collectstatic before launch...');
+      const collected = await this.runCommand(`${pythonBin} ${managePy} collectstatic --noinput`, cwd, ctx.projectId);
+      if (!collected) {
+        const recoveredMissingModule = await this.tryRecoverMissingPythonModule(ctx, cwd, this.lastCommandOutput, attemptedModuleRecoveries);
+        if (recoveredMissingModule) {
+          this.onLog('[Launch] Retrying Django collectstatic after dependency recovery...');
+          const retryCollected = await this.runCommand(`${pythonBin} ${managePy} collectstatic --noinput`, cwd, ctx.projectId);
+          if (retryCollected) { this.djangoStaticPreparedPaths.add(key); this.onLog('[Launch] Django static assets collected after dependency recovery.'); return; }
+        }
+        this.onLog('[Warning] Django collectstatic failed. Static manifest-related runtime errors may persist until static assets are collected.', 'warning');
+      } else {
+        this.djangoStaticPreparedPaths.add(key);
+        this.onLog('[Launch] Django static assets collected.');
+      }
+    }
+  }
+
+  private isDjangoRunserverCommand(command: string): boolean {
+    const normalized = String(command ?? '').toLowerCase();
+    return normalized.includes('manage.py') && normalized.includes('runserver');
+  }
+
+  private async tryRecoverDjangoStaticManifestError(ctx: InstallContext, cwd: string, useVenv: boolean, launchError: string, launchCommand: string): Promise<boolean> {
+    if (!this.isDjangoRunserverCommand(launchCommand)) return false;
+    if (!String(launchError ?? '').toLowerCase().includes('missing staticfiles manifest entry')) return false;
+    const managePy = await this.findFileRecursive(cwd, 'manage.py');
+    if (!managePy) return false;
+    const key = cwd.toLowerCase();
+    this.djangoStaticPreparedPaths.delete(key);
+    const pythonBin = this.resolvePythonBin(cwd, useVenv);
+    this.onLog('[Launch][Recovery] Static manifest entry missing. Rebuilding Django static manifest...', 'warning');
+    const ok = await this.runCommand(`${pythonBin} ${managePy} collectstatic --noinput --clear`, cwd, ctx.projectId);
+    if (!ok) { this.onLog('[Launch][Recovery] Django collectstatic --clear failed.', 'warning'); return false; }
+    this.djangoStaticPreparedPaths.add(key);
+    this.onLog('[Launch][Recovery] Django static manifest rebuilt successfully.');
+    return true;
+  }
+
+  private async tryRecoverMissingPythonModule(ctx: InstallContext, cwd: string, launchError: string, attemptedModuleRecoveries: Set<string>): Promise<boolean> {
+    const missingModule = this.extractMissingPythonModule(launchError);
+    if (!missingModule) return false;
+    const missingKey = missingModule.toLowerCase();
+    if (attemptedModuleRecoveries.has(missingKey)) {
+      const stillImportable = await this.isPythonModuleImportable(cwd, missingModule);
+      if (!stillImportable) {
+        this.onLog(`[Launch][Recovery] Previous recovery for ${missingModule} did not persist in current environment. Retrying install...`, 'warning');
+        attemptedModuleRecoveries.delete(missingKey);
+      } else {
+        this.onLog(`[Launch][Recovery] Module ${missingModule} was already auto-recovered in this launch cycle. Skipping repeat install.`, 'warning');
+        return false;
+      }
+    }
+    if (attemptedModuleRecoveries.has(missingKey)) {
+      this.onLog(`[Launch][Recovery] Module ${missingModule} was already auto-recovered in this launch cycle. Skipping repeat install.`, 'warning');
+      return false;
+    }
+    if (missingKey === 'django.core.urlresolvers') {
+      this.onLog('[Launch][Recovery] Detected deprecated Django import "django.core.urlresolvers". Applying compatibility rewrite to "django.urls"...', 'warning');
+      const patched = this.tryPatchDjangoUrlResolvers(cwd);
+      if (patched) { attemptedModuleRecoveries.add(missingKey); this.onLog('[Launch][Recovery] Updated deprecated django.core.urlresolvers imports to django.urls.'); return true; }
+      this.onLog('[Launch][Recovery] No django.core.urlresolvers imports were updated. Manual compatibility patch may be required.', 'warning');
+      return false;
+    }
+    const packageName = this.mapPythonModuleToPackage(missingModule);
+    this.onLog(`[Launch][Recovery] Missing module detected: ${missingModule}. Installing package ${packageName} in project venv...`, 'warning');
+    const pip = this.getPipCmd(cwd);
+    const ok = await this.runCommand(`${pip} install ${packageName}`, cwd, ctx.projectId);
+    if (!ok) { this.onLog(`[Launch][Recovery] Failed to install ${packageName} for missing module ${missingModule}.`, 'warning'); return false; }
+    const importable = await this.isPythonModuleImportable(cwd, missingModule);
+    if (!importable) { this.onLog(`[Launch][Recovery] Installed ${packageName}, but module ${missingModule} is still not importable in the current Python environment.`, 'warning'); return false; }
+    attemptedModuleRecoveries.add(missingKey);
+    this.onLog(`[Launch][Recovery] Installed ${packageName} for missing module ${missingModule}.`);
+    return true;
+  }
+
+  private async isPythonModuleImportable(cwd: string, moduleName: string): Promise<boolean> {
+    const mod = String(moduleName ?? '').trim();
+    if (!mod) return false;
+    const pythonBin = this.resolvePythonBin(cwd, true);
+    const escaped = mod.replace(/"/g, '\\"');
+    const checkCmd = `${pythonBin} -c "import importlib; importlib.import_module(\\"${escaped}\\")"`;
+    const result = await this.execAndCaptureResult(checkCmd, cwd);
+    return result.ok;
+  }
+
+  private tryPatchDjangoUrlResolvers(projectRoot: string): boolean {
+    const ignoredDirs = new Set(['.git', '.venv', 'venv', 'node_modules', '__pycache__', 'dist', 'build']);
+    const stack: string[] = [projectRoot];
+    let patchedFiles = 0;
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) continue;
+      let entries: fs.Dirent[] = [];
+      try { entries = fs.readdirSync(current, { withFileTypes: true }); } catch { continue; }
+      for (const entry of entries) {
+        const fullPath = path.join(current, entry.name);
+        if (entry.isDirectory()) { if (!ignoredDirs.has(entry.name.toLowerCase())) stack.push(fullPath); continue; }
+        if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.py')) continue;
+        let source = '';
+        try { source = fs.readFileSync(fullPath, 'utf8'); } catch { continue; }
+        if (!source.includes('django.core.urlresolvers')) continue;
+        const updated = source.replace(/django\.core\.urlresolvers/g, 'django.urls');
+        if (updated === source) continue;
+        try { fs.writeFileSync(fullPath, updated, 'utf8'); patchedFiles += 1; this.onLog(`[Launch][Recovery] Patched deprecated import in ${fullPath}`); } catch { }
+      }
+    }
+    return patchedFiles > 0;
+  }
+
+  private extractMissingPythonModule(errorText: string): string | null {
+    const normalized = String(errorText ?? '');
+    const match = normalized.match(/ModuleNotFoundError:\s+No module named ['\"]([^'\"]+)['\"]/i);
+    if (match) return String(match[1] ?? '').trim() || null;
+    const genericNoModuleMatch = normalized.match(/No module named ['\"]([^'\"]+)['\"]/i);
+    if (genericNoModuleMatch) return String(genericNoModuleMatch[1] ?? '').trim() || null;
+    const missingDependencyMatch = normalized.match(/requires the installation of ['\"]([^'\"]+)['\"]/i);
+    if (missingDependencyMatch) return String(missingDependencyMatch[1] ?? '').trim() || null;
+    return null;
+  }
+
+  private mapPythonModuleToPackage(moduleName: string): string {
+    const mod = String(moduleName ?? '').trim().toLowerCase();
+    const packageMap: Record<string, string> = {
+      environ: 'django-environ', dj_database_url: 'dj-database-url', sorl: 'sorl-thumbnail',
+      easy_thumbnails: 'easy-thumbnails', yaml: 'pyyaml', cv2: 'opencv-python', pil: 'pillow',
+      bs4: 'beautifulsoup4', dotenv: 'python-dotenv', decouple: 'python-decouple',
+    };
+    if (packageMap[mod]) return packageMap[mod];
+    if (mod.includes('_')) return mod.replace(/_/g, '-');
+    return mod;
+  }
+
+  private isMissingPythonEntryPointError(errorMessage: string): boolean {
+    const normalized = String(errorMessage ?? '').toLowerCase();
+    if (!normalized) return false;
+    if (normalized.includes('cannot determine how to start this python project')) return true;
+    if (normalized.includes('main.py') && (normalized.includes('no such file') || normalized.includes('not found'))) return true;
+    if (normalized.includes("can't open file") && normalized.includes('no such file or directory')) return true;
+    return false;
+  }
+
+  private async verifyPythonHttpHealth(port: number): Promise<{ healthy: boolean; detail?: string }> {
+    const url = `http://127.0.0.1:${port}/`;
+    try {
+      const response = await axios.get(url, { timeout: 7000, validateStatus: () => true });
+      if (response.status >= 500) return { healthy: false, detail: `HTTP ${response.status} on ${url}` };
+      return { healthy: true };
+    } catch (err: any) {
+      return { healthy: false, detail: `Health probe failed for ${url}: ${String(err?.message ?? err)}` };
+    }
+  }
+
+  private async promptUserToAddPythonEntryPoint(ctx: InstallContext, useVenv: boolean, errorMessage: string): Promise<boolean> {
+    this.onLog('[Launch] Python entry file is missing. Waiting for user to add/fix entry point.');
+    let lastValidationError: string | undefined;
+    while (true) {
+      const basePrompt = 'Python entry file was not found (for example main.py/app.py/manage.py). Create the file or set a valid run command, then choose "I Fixed It, Retry".';
+      const choice = await this.resolveConflict({ component: 'python-entrypoint', projectType: ctx.projectType, message: lastValidationError ? `${basePrompt} Last input error: ${lastValidationError}` : basePrompt, installUrl: undefined, allowFileInput: true });
+      if (choice === 'docker') throw new DockerFallbackRequestedError('User chose Docker while fixing missing Python entry point.');
+      if (typeof choice === 'object' && choice.action === 'specifyFile') {
+        const normalizedFile = this.normalizeSpecifiedPythonFile(choice.value);
+        this.onLog(`[Launch] User specified entry file: ${normalizedFile}`);
+        try {
+          const newRunCommand = await this.resolveRunCommand(ctx, useVenv, normalizedFile);
+          ctx.runCommand = newRunCommand;
+          this.onLog(`[Launch] Updated run command to: ${newRunCommand}`);
+          lastValidationError = undefined;
+          return true;
+        } catch (verifyErr: any) {
+          lastValidationError = String(verifyErr?.message ?? errorMessage);
+          this.onLog(`[Launch] Entry-point check with specified file failed: ${lastValidationError}`, 'warning');
+          continue;
+        }
+      }
+      try { await this.resolveRunCommand(ctx, useVenv); return true; } catch (verifyErr: any) {
+        lastValidationError = String(verifyErr?.message ?? errorMessage);
+        this.onLog(`[Launch] Entry-point check after manual retry still failed: ${lastValidationError}`, 'warning');
+      }
+    }
+  }
+
+  private async tryLaunchRecovery(ctx: InstallContext, cwd: string, command: string, errorOutput: string, launchOutput: string, attemptedModuleRecoveries: Set<string>): Promise<{ recovered: boolean; patternId?: number }> {
+    try {
+      const response = await this.apiClient.post<{ source: string; pattern_id?: number; guidance?: string | null; solutions: Array<{ description: string; commands: string[][]; success_rate?: number }> }>(`/api/projects/${ctx.projectId}/launch-recovery`, { project_type: ctx.projectType, command, error_output: errorOutput, launch_output: launchOutput });
+      const solutions = Array.isArray(response.data?.solutions) ? response.data.solutions : [];
+      const patternId = Number.isInteger(response.data?.pattern_id) ? Number(response.data?.pattern_id) : undefined;
+      const guidance = typeof response.data?.guidance === 'string' ? response.data.guidance.trim() : '';
+      if (!solutions.length) {
+        if (guidance) this.onLog(`[Launch][Recovery] ${guidance}`);
+        this.onLog('[Launch][Recovery] No suggested fix returned by analyzer.');
+        return { recovered: false, patternId };
+      }
+      for (const solution of solutions.slice(0, 2)) {
+        this.onLog(`[Launch][Recovery] Trying: ${solution.description}`);
+        let allOk = true;
+        for (const argv of solution.commands ?? []) {
+          const normalizedArgv = await this.normalizeRecoveryCommand(argv, ctx, cwd, launchOutput);
+          if (this.isUnsafeRecoveryCommand(normalizedArgv)) {
+            this.onLog(`[Launch][Recovery] Skipping unsafe recovery command: ${normalizedArgv.join(' ')}`);
+            allOk = false;
+            break;
+          }
+          const shellCommand = this.argvToShell(normalizedArgv);
+          if (!shellCommand) { allOk = false; break; }
+          const ok = await this.runCommand(shellCommand, cwd, ctx.projectId);
+          if (!ok) {
+            if (ctx.projectType === 'python' && this.lastCommandOutput) {
+              const recoveredFromCommandOutput = await this.tryRecoverMissingPythonModule(ctx, cwd, this.lastCommandOutput, attemptedModuleRecoveries);
+              if (recoveredFromCommandOutput) {
+                this.onLog('[Launch][Recovery] Installed missing Python dependency inferred from failed recovery command output.');
+                await this.reportLaunchRecoveryFeedback(ctx.projectId, patternId, true);
+                return { recovered: true, patternId };
+              }
+            }
+            allOk = false;
+            break;
+          }
+        }
+        if (allOk) {
+          this.onLog('[Launch][Recovery] Fix applied successfully.');
+          await this.reportLaunchRecoveryFeedback(ctx.projectId, patternId, true);
+          return { recovered: true, patternId };
+        }
+      }
+      this.onLog('[Launch][Recovery] Suggested fixes did not complete successfully.');
+      await this.reportLaunchRecoveryFeedback(ctx.projectId, patternId, false);
+      return { recovered: false, patternId };
+    } catch (err: any) {
+      this.onLog(`[Launch][Recovery] Analyzer call failed: ${err?.message ?? err}`);
+      return { recovered: false };
+    }
+  }
+
+  private async reportLaunchRecoveryFeedback(projectId: string, patternId: number | undefined, success: boolean): Promise<void> {
+    if (!patternId) return;
+    try { await this.apiClient.post(`/api/projects/${projectId}/launch-recovery-feedback`, { pattern_id: patternId, success }); } catch { }
+  }
+
+  private async reportLaunchErrorForLearning(ctx: InstallContext, command: string, errorOutput: string, launchOutput: string): Promise<void> {
+    try { await this.apiClient.post(`/api/projects/${ctx.projectId}/launch-recovery`, { project_type: ctx.projectType, command, error_output: errorOutput, launch_output: launchOutput }); } catch { }
+  }
+
+  private async normalizeRecoveryCommand(argv: string[], ctx: InstallContext, cwd: string, launchOutput: string): Promise<string[]> {
+    const parts = Array.isArray(argv) ? argv.map((part) => String(part ?? '').trim()).filter(Boolean) : [];
+    if (parts.length === 0) return parts;
+    if (ctx.projectType !== 'python') return parts;
+    const first = parts[0].toLowerCase();
+    const usesPython = first === 'python' || first === 'python3' || first.endsWith('python.exe');
+    const usesPip = first === 'pip' || first === 'pip3' || first.endsWith('pip.exe');
+    const hasVenv = fs.existsSync(path.join(cwd, '.venv'));
+    if (!hasVenv) return parts;
+    const pipCmd = this.getPipCmd(cwd).replace(/^"|"$/g, '');
+    const pythonCmd = this.resolvePythonBin(cwd, true).replace(/^"|"$/g, '');
+    if (usesPython) parts[0] = pythonCmd;
+    if (usesPip) parts[0] = pipCmd;
+    else if (usesPython && parts.length >= 3 && parts[1] === '-m' && parts[2].toLowerCase() === 'pip') parts[0] = pythonCmd;
+    if (parts.length >= 2 && parts[0].toLowerCase().includes('pip') && parts[1].toLowerCase() === 'uninstall') {
+      if (!parts.some((part) => part === '-y' || part === '--yes')) parts.splice(2, 0, '-y');
+    }
+    if (parts.some((part) => /python-decouple/i.test(part)) && /No module named ['"]environ['"]/i.test(launchOutput)) {
+      this.onLog('[Launch][Recovery] Rewriting suggested package python-decouple to django-environ for missing module "environ".');
+      return parts.map((part) => part.replace(/python-decouple/ig, 'django-environ'));
+    }
+    if (usesPython && parts.length >= 2) {
+      const manageArg = parts[1];
+      const normalizedManageArg = String(manageArg ?? '').replace(/^['"]+|['"]+$/g, '');
+      const looksLikeManage = /(^|[\\/])manage\.py$/i.test(normalizedManageArg);
+      if (looksLikeManage) {
+        const candidate = path.isAbsolute(normalizedManageArg) ? normalizedManageArg : path.join(cwd, normalizedManageArg);
+        if (!fs.existsSync(candidate)) {
+          const discoveredManagePy = await this.findFileRecursive(cwd, 'manage.py');
+          if (discoveredManagePy) { this.onLog(`[Launch][Recovery] Rewriting recovery manage.py path from "${normalizedManageArg}" to "${discoveredManagePy}".`); parts[1] = discoveredManagePy; }
+        }
+        if (parts.length >= 3 && String(parts[2]).toLowerCase() === 'shell') {
+          this.onLog('[Launch][Recovery] Rewriting interactive Django shell recovery command to non-interactive "manage.py check".');
+          parts[2] = 'check';
+          if (parts.length > 3) parts.splice(3);
+        }
+      }
+    }
+    return parts;
+  }
+
+  private argvToShell(argv: string[]): string {
+    if (!Array.isArray(argv) || argv.length === 0) return '';
+    return argv.map((part) => {
+      const value = String(part ?? '').trim();
+      if (!value) return '';
+      if (/\s|"/.test(value)) return `"${value.replace(/"/g, '\\"')}"`;
+      return value;
+    }).filter(Boolean).join(' ');
+  }
+
+  private augmentNodeStartCommand(cwd: string, runCommand: string, scripts: Record<string, string>): string | undefined {
+    if (!this.shouldBuildBeforeNodeStart(cwd, scripts.start)) return undefined;
+    const compileScript = this.nodePreStartBuildCommand(cwd, runCommand, scripts);
+    if (!compileScript) return undefined;
+    this.onLog('[Launch] Detected missing build output for node start command; running compile first.');
+    return `${compileScript} && ${runCommand}`;
+  }
+
+  private shouldBuildBeforeNodeStart(cwd: string, startScript: string | undefined): boolean {
+    if (typeof startScript !== 'string' || !startScript.trim()) return false;
+    const normalizedStart = startScript.trim();
+    const nodeEntryMatch = normalizedStart.match(/\bnode(?:\.exe)?\s+([^&|;]+)/i);
+    if (nodeEntryMatch) {
+      const rawEntry = nodeEntryMatch[1].trim().replace(/^['"`]|['"`]$/g, '');
+      const resolvedEntry = rawEntry.replace(/^\.\//, '');
+      if (resolvedEntry && !fs.existsSync(path.join(cwd, resolvedEntry))) return true;
+    }
+    const referencesBuildOutput = normalizedStart.includes('dist/') || normalizedStart.includes('dist\\') || normalizedStart.includes('build/') || normalizedStart.includes('build\\');
+    if (referencesBuildOutput) {
+      const pathMatch = normalizedStart.match(/(?:dist|build)[^\s'"`]+/i);
+      if (pathMatch) {
+        const candidate = pathMatch[0].replace(/^\.\//, '').replace(/['"`]/g, '');
+        if (!fs.existsSync(path.join(cwd, candidate))) return true;
+      }
+    }
+    return false;
+  }
+
+  private nodePreStartBuildCommand(cwd: string, runCommand: string, scripts: Record<string, string>): string | undefined {
+    const trimmed = runCommand.trim();
+    const hasCompile = typeof scripts.compile === 'string' && scripts.compile.trim().length > 0;
+    const hasBuild = typeof scripts.build === 'string' && scripts.build.trim().length > 0;
+    const hasCompileDb = typeof scripts['compile:db'] === 'string' && scripts['compile:db'].trim().length > 0;
+    const needsDbCompile = hasCompileDb && this.isEverShopDbPackageMissing(cwd);
+    if (needsDbCompile && (/^npm\s+run\s+start(?:\s+.*)?$/i.test(trimmed) || /^npm\s+start(?:\s+.*)?$/i.test(trimmed))) return hasCompile ? 'npm run compile:db && npm run compile' : 'npm run compile:db';
+    if (/^npm\s+run\s+start(?:\s+.*)?$/i.test(trimmed) || /^npm\s+start(?:\s+.*)?$/i.test(trimmed)) {
+      if (needsDbCompile) return hasCompile ? 'npm run compile:db && npm run compile' : 'npm run compile:db';
+      if (hasCompile) return 'npm run compile';
+      if (hasBuild) return 'npm run build';
+    }
+    if (/^pnpm\s+start(?:\s+.*)?$/i.test(trimmed)) {
+      if (needsDbCompile) return hasCompile ? 'pnpm compile:db && pnpm compile' : 'pnpm compile:db';
+      if (hasCompile) return 'pnpm compile';
+      if (hasBuild) return 'pnpm build';
+    }
+    if (/^yarn\s+start(?:\s+.*)?$/i.test(trimmed)) {
+      if (needsDbCompile) return hasCompile ? 'yarn compile:db && yarn compile' : 'yarn compile:db';
+      if (hasCompile) return 'yarn compile';
+      if (hasBuild) return 'yarn build';
+    }
+    return undefined;
+  }
+
+  private isEverShopDbPackageMissing(cwd: string): boolean {
+    return ![
+      path.join(cwd, 'node_modules', '@evershop', 'postgres-query-builder', 'dist', 'index.js'),
+      path.join(cwd, 'packages', 'postgres-query-builder', 'dist', 'index.js'),
+      path.join(cwd, 'packages', 'postgres-query-builder', 'dist', 'lib', 'index.js'),
+    ].some((p) => fs.existsSync(p));
+  }
+
+  private shouldWaitForPort(projectType: string, cmd: string): boolean {
+    if (projectType === 'static') return true; // python http.server does bind a port
+    const normalized = cmd.toLowerCase();
+    if (projectType === 'java') {
+      return normalized.includes('spring-boot:run') || normalized.includes('bootrun') || normalized.includes('quarkus') || normalized.includes('micronaut') || normalized.includes('java -jar');
+    }
+    return true;
+  }
+
+  private resolvePythonBin(cwd: string, useVenv: boolean): string {
+    if (useVenv) {
+      const venvPython = this.findVenvBinary(cwd, 'python.exe', 'python');
+      if (venvPython) return venvPython;
+    }
+    return process.platform === 'win32' ? 'python' : 'python3';
+  }
+
+  private hasUsableVenv(cwd: string): boolean {
+    return !!this.findVenvBinary(cwd, 'python.exe', 'python') && !!this.findVenvBinary(cwd, 'pip.exe', 'pip');
+  }
+
+  private findVenvBinary(cwd: string, windowsName: string, unixName: string): string | null {
+    const directCandidates = [path.join(cwd, '.venv', 'Scripts', windowsName), path.join(cwd, '.venv', 'bin', unixName)];
+    for (const candidate of directCandidates) {
+      if (fs.existsSync(candidate)) return candidate.includes(' ') ? `"${candidate}"` : candidate;
+    }
+    const ignoredDirs = new Set(['node_modules', '__pycache__', 'dist', 'build', '.git']);
+    const stack: Array<{ dir: string; depth: number }> = [{ dir: cwd, depth: 0 }];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) continue;
+      const candidateWin = path.join(current.dir, '.venv', 'Scripts', windowsName);
+      const candidateUnix = path.join(current.dir, '.venv', 'bin', unixName);
+      if (fs.existsSync(candidateWin)) return `"${candidateWin}"`;
+      if (fs.existsSync(candidateUnix)) return candidateUnix;
+      if (current.depth >= 3) continue;
+      let entries: fs.Dirent[] = [];
+      try { entries = fs.readdirSync(current.dir, { withFileTypes: true }); } catch { continue; }
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const lowered = entry.name.toLowerCase();
+        if (ignoredDirs.has(lowered)) continue;
+        stack.push({ dir: path.join(current.dir, entry.name), depth: current.depth + 1 });
+      }
+    }
+    return null;
+  }
+
+  private async resolvePort(ctx: InstallContext): Promise<number> {
+    const intended = ctx.launchPort ?? this.defaultPort(ctx.projectType);
+    if (!this.isPortInUse(intended)) return intended;
+    for (let p = intended + 1; p < intended + 100; p++) {
+      if (!this.isPortInUse(p)) { this.onLog(`[Conflict] Port ${intended} is in use. Using port ${p} instead`); return p; }
+    }
+    return intended;
+  }
+
+  private isPortInUse(port: number): boolean {
+    const net = require('net');
+    const server = net.createServer();
+    try { server.listen(port, '127.0.0.1'); server.close(); return false; } catch { return true; }
+  }
+
+  private async requirementsMentions(cwd: string, pkg: string): Promise<boolean> {
+    const req = path.join(cwd, 'requirements.txt');
+    if (!fs.existsSync(req)) return false;
+    return fs.readFileSync(req, 'utf8').toLowerCase().includes(pkg.toLowerCase());
+  }
+
+  private normalizeSpecifiedPythonFile(rawFile: string): string {
+    return String(rawFile ?? '').trim().replace(/^['"]+|['"]+$/g, '');
+  }
+
+  private pythonRunCommandTargetsMissingScript(cwd: string, runCommand: string): boolean {
+    const command = String(runCommand ?? '').trim();
+    if (!command) return false;
+    const pythonPrefixMatch = command.match(/^((?:"[^"]*python(?:\.exe)?"|[^\s"]*python(?:\.exe)?|python))\s+(.+)$/i);
+    if (!pythonPrefixMatch) return false;
+    const remainder = (pythonPrefixMatch[2] ?? '').trim();
+    if (!remainder || remainder.startsWith('-')) return false;
+    const scriptTokenMatch = remainder.match(/^("[^"]+"|[^\s]+)/);
+    const scriptToken = scriptTokenMatch ? scriptTokenMatch[1] : '';
+    if (!scriptToken) return false;
+    const normalizedScript = scriptToken.replace(/^['"]+|['"]+$/g, '');
+    const scriptPath = path.isAbsolute(normalizedScript) ? normalizedScript : path.join(cwd, normalizedScript);
+    return !fs.existsSync(scriptPath);
+  }
+
+  private async normalizePythonRunCommand(cwd: string, useVenv: boolean, ctx: InstallContext, runCommand: string): Promise<string> {
+    const command = String(runCommand ?? '').trim();
+    if (!command) return command;
+    const pythonPrefixMatch = command.match(/^((?:"[^"]*python(?:\.exe)?"|[^\s"]*python(?:\.exe)?|python|python3))\s+(.+)$/i);
+    if (!pythonPrefixMatch) return command;
+    const pythonBin = this.resolvePythonBin(cwd, useVenv);
+    const remainder = (pythonPrefixMatch[2] ?? '').trim();
+    if (!remainder) return pythonBin;
+    if (remainder.startsWith('-')) return `${pythonBin} ${remainder}`;
+    const scriptTokenMatch = remainder.match(/^("[^"]+"|[^\s]+)/);
+    const scriptToken = scriptTokenMatch ? scriptTokenMatch[1] : '';
+    if (!scriptToken) return `${pythonBin} ${remainder}`;
+    const normalizedScript = scriptToken.replace(/^['"]+|['"]+$/g, '');
+    const scriptPath = path.isAbsolute(normalizedScript) ? normalizedScript : path.join(cwd, normalizedScript);
+    const quotedScriptPath = scriptPath.includes(' ') ? `"${scriptPath}"` : scriptPath;
+    const trailingArgs = remainder.slice(scriptToken.length).trim();
+    if (path.basename(normalizedScript).toLowerCase() === 'manage.py') {
+      const hasRunServer = /(^|\s)runserver(\s|$)/i.test(trailingArgs);
+      if (!hasRunServer) { const port = await this.resolvePort(ctx); return `${pythonBin} ${quotedScriptPath} runserver 0.0.0.0:${port}`; }
+    }
+    return trailingArgs ? `${pythonBin} ${quotedScriptPath} ${trailingArgs}` : `${pythonBin} ${quotedScriptPath}`;
+  }
+
+  private async checkNodePmAvailable(cwd: string): Promise<void> {
+    const pm = this.detectNodePm(cwd);
+    if (pm === 'npm') return;
+    const exists = await this.commandExists(pm);
+    if (!exists) this.onLog(`[Warning] ${pm} not found, falling back to npm`);
+  }
+
+  private async resolveJavaBuildTool(cwd: string): Promise<'maven' | 'gradle' | null> {
+    if (fs.existsSync(path.join(cwd, 'pom.xml')) && await this.commandExists('mvn')) return 'maven';
+    const hasGradleFile = fs.existsSync(path.join(cwd, 'build.gradle')) || fs.existsSync(path.join(cwd, 'build.gradle.kts'));
+    if (hasGradleFile && (fs.existsSync(path.join(cwd, 'gradlew')) || fs.existsSync(path.join(cwd, 'gradlew.bat')) || await this.commandExists('gradle'))) return 'gradle';
+    return null;
+  }
+
+  private async resolveJavaBuildToolForDocker(cwd: string): Promise<'maven' | 'gradle' | null> {
+    const pom = await this.findFileRecursive(cwd, 'pom.xml', 3);
+    if (pom) return 'maven';
+    const gradle = await this.findFileRecursive(cwd, 'build.gradle', 3) || await this.findFileRecursive(cwd, 'build.gradle.kts', 3);
+    if (gradle) return 'gradle';
+    return null;
+  }
+
+  private gradleWrapper(cwd: string): string {
+    const win = path.join(cwd, 'gradlew.bat');
+    const unix = path.join(cwd, 'gradlew');
+    if (process.platform === 'win32' && fs.existsSync(win)) return 'gradlew.bat';
+    if (fs.existsSync(unix)) return './gradlew';
+    return 'gradle';
+  }
+
+  private async getGradleVersion(cwd: string): Promise<string | null> {
+    const wrapperVersion = this.getGradleVersionFromWrapper(cwd);
+    if (wrapperVersion) return wrapperVersion;
+    const cmd = `${this.gradleWrapper(cwd)} --version`;
+    const output = await this.execAndCapture(cmd, cwd);
+    if (!output) return null;
+    const match = output.match(/Gradle\s+(\d+(?:\.\d+){0,2})/i);
+    return match ? match[1] : null;
+  }
+
+  private getGradleVersionFromWrapper(cwd: string): string | null {
+    const wrapperPropsPath = path.join(cwd, 'gradle', 'wrapper', 'gradle-wrapper.properties');
+    if (!fs.existsSync(wrapperPropsPath)) return null;
+    try {
+      const content = fs.readFileSync(wrapperPropsPath, 'utf8');
+      const match = content.match(/distributionUrl=.*gradle-(\d+(?:\.\d+){0,2})-(?:bin|all)\.zip/i);
+      return match ? match[1] : null;
+    } catch { return null; }
+  }
+
+  private isGradleJavaIncompatible(gradleVersion: string | null, javaVersion: string | null): boolean {
+    if (!gradleVersion || !javaVersion) return false;
+    const gradleMajor = parseInt(gradleVersion.split('.')[0], 10);
+    const javaMajor = parseInt(javaVersion.split('.')[0], 10);
+    if (Number.isNaN(gradleMajor) || Number.isNaN(javaMajor)) return false;
+    if (javaMajor >= 17 && gradleMajor < 7) return true;
+    if (javaMajor >= 21 && gradleMajor < 8) return true;
+    return false;
+  }
+
+  private findPhpEntry(cwd: string): string {
+    const candidates = ['index.php', 'public/index.php', 'public_html/index.php', 'src/index.php', 'app/index.php', 'www/index.php'];
+    for (const f of candidates) { if (fs.existsSync(path.join(cwd, f))) return f; }
+    const rootPhp = fs.readdirSync(cwd).find(f => f.endsWith('.php'));
+    return rootPhp ?? 'index.php';
+  }
+
+  private findGoMain(cwd: string): string | null {
+    if (fs.existsSync(path.join(cwd, 'main.go'))) return 'main.go';
+    const cmdDir = path.join(cwd, 'cmd');
+    if (fs.existsSync(cmdDir)) {
+      const subdirs = fs.readdirSync(cmdDir, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+      if (subdirs.length > 0) return `./cmd/${subdirs[0].name}`;
+    }
+    return null;
+  }
+
+  private async fileContains(cwd: string, file: string, text: string): Promise<boolean> {
+    const fullPath = path.join(cwd, file);
+    if (!fs.existsSync(fullPath)) return false;
+    return fs.readFileSync(fullPath, 'utf8').includes(text);
+  }
+
+  private inferRunCommand(ctx: InstallContext, useVenv: boolean): string {
+    if (ctx.projectType === 'nodejs') { const pm = this.detectNodePm(ctx.hostPath); return `${pm} start`; }
+    if (ctx.projectType === 'python') {
+      const candidates = ['manage.py', 'app.py', 'main.py', 'run.py', 'wsgi.py'];
+      for (const f of candidates) { if (fs.existsSync(path.join(ctx.hostPath, f))) { if (f === 'manage.py') return 'python manage.py runserver'; return `python ${f}`; } }
+      return 'python app.py';
+    }
+    return '';
+  }
+
+  private async shouldSkipCraPreflight(cwd: string, cmd: string): Promise<boolean> {
+    if (!cmd.includes('npm start') && !cmd.includes('react-scripts start')) return false;
+    const packageJsonPath = path.join(cwd, 'package.json');
+    if (!fs.existsSync(packageJsonPath)) return false;
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+      const scripts = packageJson.scripts ?? {};
+      const dependencies = { ...(packageJson.dependencies ?? {}), ...(packageJson.devDependencies ?? {}) };
+      return Boolean(String(scripts.start ?? '').includes('react-scripts') || dependencies['react-scripts']);
+    } catch { return false; }
+  }
+
+  private async shouldEnableLegacyOpenSsl(cwd: string, cmd: string): Promise<boolean> {
+    const packageJsonPath = path.join(cwd, 'package.json');
+    if (!fs.existsSync(packageJsonPath)) return false;
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+      const scripts = packageJson.scripts ?? {};
+      const dependencies = { ...(packageJson.dependencies ?? {}), ...(packageJson.devDependencies ?? {}) };
+      const startScript = String(scripts.start ?? '');
+      const usesReactScripts = startScript.includes('react-scripts') || Boolean(dependencies['react-scripts']);
+      const usesWebpack4 = /^4\./.test(String(dependencies.webpack ?? ''));
+      const launchesFrontendDev = /npm\s+start|react-scripts\s+start|webpack-dev-server/.test(cmd);
+      return launchesFrontendDev && (usesReactScripts || usesWebpack4);
+    } catch { return false; }
+  }
+
+  private async findFileRecursive(cwd: string, filename: string, maxDepth: number = 3, currentDepth: number = 0): Promise<string | null> {
+    if (currentDepth > maxDepth) return null;
+    const fullPath = path.join(cwd, filename);
+    if (fs.existsSync(fullPath)) return filename;
+    try {
+      const entries = fs.readdirSync(cwd, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && !entry.name.startsWith('.')) {
+          const result = await this.findFileRecursive(path.join(cwd, entry.name), filename, maxDepth, currentDepth + 1);
+          if (result) return path.join(entry.name, result).replace(/\\/g, '/');
+        }
+      }
+    } catch { }
+    return null;
+  }
+
+  private detectNodePm(cwd: string): string {
+    if (fs.existsSync(path.join(cwd, 'pnpm-lock.yaml'))) return 'pnpm';
+    if (fs.existsSync(path.join(cwd, 'yarn.lock'))) return 'yarn';
+    return 'npm';
+  }
+
+  private detectPythonPm(cwd: string): string {
+    if (fs.existsSync(path.join(cwd, 'pyproject.toml'))) return 'poetry';
+    if (fs.existsSync(path.join(cwd, 'Pipfile'))) return 'pipenv';
+    return 'pip';
+  }
+
+  private getPipCmd(cwd: string): string {
+    const venvPip = this.findVenvBinary(cwd, 'pip.exe', 'pip');
+    if (venvPip) return venvPip;
+    return 'pip';
+  }
+
+  private async commandExists(cmd: string): Promise<boolean> {
+    return new Promise(resolve => {
+      cp.exec(`${process.platform === 'win32' ? 'where' : 'which'} ${cmd}`, (err) => resolve(!err));
+    });
+  }
+
+  private async getVersion(cmd: string, flag: string): Promise<string | null> {
+    return new Promise(resolve => {
+      cp.exec(`${cmd} ${flag}`, (err, stdout, stderr) => {
+        if (err) { resolve(null); return; }
+        const output = (stdout || stderr).trim();
+        const match = output.match(/(\d+\.\d+[\.\d]*)/);
+        resolve(match ? match[1] : output);
+      });
+    });
+  }
+
+  private async execAndCapture(cmd: string, cwd: string): Promise<string> {
+    return new Promise((resolve) => {
+      cp.exec(cmd, { cwd }, (err, stdout, stderr) => {
+        if (err) { resolve(''); return; }
+        resolve((stdout || stderr || '').trim());
+      });
+    });
+  }
+
+  private async execAndCaptureResult(cmd: string, cwd: string): Promise<{ ok: boolean; output: string; errorOutput: string }> {
+    return new Promise((resolve) => {
+      cp.exec(cmd, { cwd }, (err, stdout, stderr) => {
+        const output = (stdout || '').trim();
+        const errorOutput = (stderr || err?.message || '').trim();
+        if (err) { resolve({ ok: false, output, errorOutput }); return; }
+        resolve({ ok: true, output: output || errorOutput, errorOutput: '' });
+      });
+    });
+  }
+
+  private async resolveConflict(info: ConflictResolutionInfo): Promise<ConflictResolutionChoice> {
+    const missingRuntimePattern = /(not\s+installed|not\s+found|missing|unavailable)/i;
+    if (this.onRuntimeMissing && info.installUrl && missingRuntimePattern.test(info.message)) {
+      await this.onRuntimeMissing({ tool: info.component, installUrl: info.installUrl, projectType: info.projectType, message: info.message });
+    }
+    this.onLog('[Paused] Installation is waiting for your conflict resolution choice in the extension panel.');
+    if (this.onConflictResolution) return await this.onConflictResolution(info);
+    return 'manual';
+  }
+
+  private async runDockerFallback(ctx: InstallContext): Promise<number> {
+    await this.reportProgress(ctx.projectId, 35, 'Preparing Docker fallback');
+    this.mappedWebserverPort = null;
+    const hasDocker = await this.commandExists('docker');
+    if (!hasDocker) throw new Error('Docker is not installed or not in PATH. Install Docker Desktop and retry.');
+    const cwd = ctx.hostPath;
+
+    if (ctx.projectType === 'php') {
+      const composeContext = this.findDockerComposeContext(cwd);
+      if (composeContext) {
+        this.onLog(`[Docker] Found compose fallback context: dir=${composeContext.dir}, file=${composeContext.file}`);
+        return await this.runLaravelDockerComposeFallback(ctx, composeContext.dir, composeContext.file);
+      }
+      this.onLog('[Docker] No compose file found in project path or parent folders. Using generic PHP Docker fallback.', 'warning');
+    }
+
+    let port = await this.resolvePort(ctx);
+    const normalizedPath = cwd.replace(/\\/g, '/');
+    const containerBaseName = `pa-${ctx.projectId.slice(-8)}-${Date.now()}`;
+    const image = await this.resolveDockerImage(ctx, cwd);
+    const hasImage = await this.dockerImageExists(image, cwd);
+    if (!hasImage) {
+      const approved = this.onDockerImagePullApproval ? await this.onDockerImagePullApproval(image) : false;
+      if (!approved) throw new Error(`Docker image ${image} is not available locally and pull was not approved.`);
+      this.onLog(`[Docker] Pulling image ${image}...`);
+      const pullResult = await this.execAndCaptureResult(`docker pull ${image}`, cwd);
+      if (!pullResult.ok) { const details = pullResult.errorOutput || pullResult.output || 'No output from docker pull.'; this.onLog(`[Docker] docker pull failed: ${details}`, 'error'); throw new Error(`Failed to pull Docker image ${image}. ${details}`); }
+      this.onLog(`[Docker] Image ready: ${image}`);
+    }
+    let containerName = '';
+    let containerId = '';
+    let lastDockerError = '';
+    for (let attempt = 1; attempt <= 6; attempt += 1) {
+      containerName = `${containerBaseName}-${attempt}`;
+      const containerScript = await this.resolveDockerScript(ctx, cwd, port);
+      const escapedScript = containerScript.replace(/"/g, '\\"');
+      await this.execAndCapture(`docker rm -f ${containerName}`, cwd);
+      const dockerRunCmd = `docker run -d --name ${containerName} --entrypoint sh -p ${port}:${port} -w /workspace -v "${normalizedPath}:/workspace" -e PORT=${port} ${image} -lc "${escapedScript}"`;
+      this.onLog(`[Docker] Starting container with image ${image} on port ${port} (attempt ${attempt}/6)`);
+      const dockerRun = await this.execAndCaptureResult(dockerRunCmd, cwd);
+      containerId = dockerRun.output;
+      if (dockerRun.ok && containerId) break;
+      const details = dockerRun.errorOutput || 'No stderr output from docker command.';
+      lastDockerError = details;
+      const portBusy = /port is already allocated|bind for 0\.0\.0\.0:\d+ failed/i.test(details);
+      if (!portBusy || attempt === 6) { this.onLog(`[Docker] docker run failed: ${details}`, 'error'); throw new Error(`Failed to start Docker container. ${details}`); }
+      const nextPort = await this.findAvailablePort(port + 1, 100);
+      if (!nextPort) { this.onLog(`[Docker] docker run failed: ${details}`, 'error'); throw new Error(`Failed to start Docker container. ${details}`); }
+      this.onLog(`[Docker] Port ${port} is busy. Retrying on port ${nextPort}.`, 'warning');
+      port = nextPort;
+    }
+    if (!containerId) { const details = lastDockerError || 'Unknown docker run error.'; this.onLog(`[Docker] docker run failed: ${details}`, 'error'); throw new Error(`Failed to start Docker container. ${details}`); }
+    this.onLog(`[Docker] Container started: ${containerName}`);
+    this.onLog(`[Docker] Logs: docker logs -f ${containerName}`);
+    await this.reportProgress(ctx.projectId, 90, 'Launching application in Docker');
+    const waitMs = ctx.projectType === 'java' ? 180_000 : 90_000;
+    const bound = await this.waitForPort(port, waitMs);
+    if (!bound) {
+      const running = await this.isContainerRunning(containerName, cwd);
+      const recentLogs = await this.execAndCapture(`docker logs --tail 80 ${containerName}`, cwd);
+      if (!running) throw new Error(`Docker container exited before becoming ready on port ${port}. Recent logs:\n${recentLogs || 'No container logs available.'}`);
+      throw new Error(`Docker container is running but port ${port} is not responding after ${Math.round(waitMs / 1000)}s. Recent logs:\n${recentLogs || 'No container logs available.'}`);
+    }
+
+    const stillRunning = await this.isContainerRunning(containerName, cwd);
+    if (!stillRunning) {
+      const recentLogs = await this.execAndCapture(`docker logs --tail 80 ${containerName}`, cwd);
+      throw new Error(`Docker container exited right after binding port ${port}. Recent logs:\n${recentLogs || 'No container logs available.'}`);
+    }
+
+    if (ctx.projectType === 'php') {
+      const healthy = await this.waitForHttpResponse(port, 20_000);
+      if (!healthy) {
+        const recentLogs = await this.execAndCapture(`docker logs --tail 120 ${containerName}`, cwd);
+        throw new Error(
+          `Docker PHP container started but HTTP endpoint on port ${port} did not become ready. ` +
+          `Recent logs:\n${recentLogs || 'No container logs available.'}`
+        );
+      }
+    }
+
+    return port;
+  }
+
+  private findDockerComposeFile(cwd: string): string | null {
+    for (const candidate of ['docker-compose.yaml', 'docker-compose.yml', 'compose.yaml', 'compose.yml']) {
+      if (fs.existsSync(path.join(cwd, candidate))) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  private findDockerComposeContext(cwd: string): { dir: string; file: string } | null {
+    let current = cwd;
+    for (let depth = 0; depth < 3; depth += 1) {
+      const file = this.findDockerComposeFile(current);
+      if (file) {
+        return { dir: current, file };
+      }
+      const parent = path.dirname(current);
+      if (parent === current) {
+        break;
+      }
+      current = parent;
+    }
+    return null;
+  }
+
+  private async detectComposeServiceName(cwd: string, composeFile: string): Promise<string> {
+    const services = await this.getComposeServices(cwd, composeFile);
+    if (!services.length) {
+      return 'app';
+    }
+
+    const preferredNames = ['app', 'php', 'backend', 'laravel', 'web'];
+    for (const preferredName of preferredNames) {
+      const match = services.find((service) => service.toLowerCase() === preferredName);
+      if (match) {
+        return match;
+      }
+    }
+
+    return services[0];
+  }
+
+  private async resolveComposeHostPort(cwd: string, composeFile: string, serviceName: string): Promise<number | undefined> {
+    if (this.mappedWebserverPort && this.mappedWebserverPort > 0) {
+      return this.mappedWebserverPort;
+    }
+
+    const containerPorts = [8000, 80, 8080];
+    for (const containerPort of containerPorts) {
+      const portResult = await this.execAndCaptureResult(
+        `docker compose -f "${composeFile}" port ${serviceName} ${containerPort}`,
+        cwd,
+      );
+      const output = (portResult.output || '').trim();
+      if (!output) {
+        continue;
+      }
+      const match = output.match(/:(\d+)\s*$/);
+      if (match) {
+        const parsed = Number(match[1]);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          return parsed;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private async runLaravelDockerComposeFallback(ctx: InstallContext, cwd: string, composeFile: string): Promise<number> {
+    const serviceName = await this.detectComposeServiceName(cwd, composeFile);
+    this.onLog(`[Docker] Using compose file ${composeFile} and service ${serviceName}`);
+
+    await this.reportProgress(ctx.projectId, 40, 'Starting Docker Compose stack');
+    const upResult = await this.runComposeUpWithFallback(cwd, composeFile);
+    if (!upResult.ok) {
+      const details = upResult.errorOutput || upResult.output || 'No output from docker compose up.';
+      throw new Error(`Failed to start Docker Compose stack. ${details}`);
+    }
+
+    const resolvedComposePort = await this.resolveComposeHostPort(cwd, composeFile, serviceName);
+    const port = resolvedComposePort ?? (ctx.launchPort ?? this.defaultPort(ctx.projectType));
+    this.onLog(`[Docker] Compose service ${serviceName} is expected on host port ${port}`);
+
+    const bootstrapScript = [
+      '[ -f .env ] || cp .env.example .env',
+      'chmod -R 777 storage bootstrap/cache || true',
+      'php artisan key:generate --force || true',
+      'php artisan migrate --seed --force || true',
+      'php artisan storage:link || true',
+      'if [ -f package.json ]; then (npm ci || npm install) || true; fi',
+    ].join(' && ');
+
+    await this.reportProgress(ctx.projectId, 65, 'Bootstrapping Laravel app in Docker Compose');
+    const execResult = await this.execAndCaptureResult(
+      `docker compose -f "${composeFile}" exec -T ${serviceName} sh -lc "${bootstrapScript.replace(/"/g, '\\"')}"`,
+      cwd,
+    );
+    if (!execResult.ok) {
+      const details = execResult.errorOutput || execResult.output || 'No output from docker compose exec.';
+      this.onLog(`[Docker] Laravel bootstrap step returned non-zero output: ${details}`, 'warning');
+    }
+
+    await this.reportProgress(ctx.projectId, 90, 'Waiting for Docker Compose app to become reachable');
+    const healthy = await this.waitForHttpResponse(port, 180_000);
+    if (!healthy) {
+      const logsResult = await this.execAndCaptureResult(
+        `docker compose -f "${composeFile}" logs --tail 120 ${serviceName}`,
+        cwd,
+      );
+      const details = logsResult.output || logsResult.errorOutput || 'No container logs available.';
+      throw new Error(`Docker Compose Laravel app did not become ready on port ${port}. Recent logs:\n${details}`);
+    }
+
+    return port;
+  }
+
+  private async runComposeUpWithFallback(
+    cwd: string,
+    composeFile: string,
+  ): Promise<{ ok: boolean; output: string; errorOutput: string }> {
+    const services = await this.getComposeServices(cwd, composeFile);
+    const hasMailhogService = services.includes('mailhog');
+    let coreFallbackResult: { ok: boolean; output: string; errorOutput: string } | undefined;
+
+    const primaryCmd = `docker compose -f "${composeFile}" up -d --build`;
+    const primary = await this.execAndCaptureResult(primaryCmd, cwd);
+    if (primary.ok) {
+      return primary;
+    }
+
+    if (hasMailhogService) {
+      this.onLog('[Docker] Full compose startup failed and mailhog service is present. Retrying with core services only (without mailhog)...', 'warning');
+      const coreRetry = await this.tryComposeWithoutMailhog(cwd, composeFile);
+      if (coreRetry?.ok) {
+        return coreRetry;
+      }
+      coreFallbackResult = coreRetry;
+    }
+
+    const combinedOutput = `${primary.output}\n${primary.errorOutput}`.toLowerCase();
+    const isBuildKitTarModeError =
+      combinedOutput.includes('failed to solve: archive/tar: unknown file mode') ||
+      (combinedOutput.includes('archive/tar') && combinedOutput.includes('unknown file mode'));
+
+    if (!isBuildKitTarModeError) {
+      return coreFallbackResult ?? primary;
+    }
+
+    this.onLog(
+      '[Docker] Compose build failed with file mode issue. Retrying with legacy builder (DOCKER_BUILDKIT=0)...',
+      'warning',
+    );
+
+    const fallbackCmd = process.platform === 'win32'
+      ? `set "DOCKER_BUILDKIT=false" && docker compose -f "${composeFile}" up -d --build`
+      : `DOCKER_BUILDKIT=0 docker compose -f "${composeFile}" up -d --build`;
+
+    const fallback = await this.execAndCaptureResult(fallbackCmd, cwd);
+    if (fallback.ok) {
+      this.onLog('[Docker] Compose stack started successfully with legacy builder.');
+      return fallback;
+    }
+
+    if (hasMailhogService) {
+      this.onLog('[Docker] Legacy builder full-stack startup failed. Retrying core services without mailhog...', 'warning');
+      const coreRetry = await this.tryComposeWithoutMailhog(cwd, composeFile);
+      if (coreRetry?.ok) {
+        return coreRetry;
+      }
+      coreFallbackResult = coreRetry ?? coreFallbackResult;
+    }
+
+    const fallbackCombined = `${fallback.output}\n${fallback.errorOutput}`;
+    const fallbackHasTarModeError = /archive\/tar: unknown file mode/i.test(fallbackCombined);
+    if (fallbackHasTarModeError && process.platform === 'win32') {
+      const updated = this.applyWindowsDockerIgnoreWorkaround(cwd, fallbackCombined);
+      if (updated) {
+        this.onLog('[Docker] Applied .dockerignore workaround for Windows file mode issue. Retrying compose build...', 'warning');
+        const retryAfterIgnore = await this.execAndCaptureResult(fallbackCmd, cwd);
+        if (retryAfterIgnore.ok) {
+          this.onLog('[Docker] Compose stack started successfully after .dockerignore workaround.');
+          return retryAfterIgnore;
+        }
+        this.onLog('[Docker] Retry after .dockerignore workaround also failed.', 'warning');
+        if (coreFallbackResult) {
+          return coreFallbackResult;
+        }
+        return retryAfterIgnore;
+      }
+    }
+
+    this.onLog('[Docker] Legacy builder retry also failed.', 'warning');
+    return coreFallbackResult ?? fallback;
+  }
+
+  private async tryComposeWithoutMailhog(
+    cwd: string,
+    composeFile: string,
+  ): Promise<{ ok: boolean; output: string; errorOutput: string } | undefined> {
+    const services = await this.getComposeServices(cwd, composeFile);
+    const coreServiceNames = ['app', 'webserver', 'db'].filter((name) => services.includes(name));
+    if (coreServiceNames.length < 2) {
+      return undefined;
+    }
+
+    this.onLog(
+      `[Docker] Detected MailHog image build failure. Retrying compose without mailhog using services: ${coreServiceNames.join(', ')}`,
+      'warning',
+    );
+
+    const coreUpCmdBase = `docker compose -f "${composeFile}" up -d --build ${coreServiceNames.join(' ')}`;
+    const coreUpCmd = process.platform === 'win32'
+      ? `set "DOCKER_BUILDKIT=false" && ${coreUpCmdBase}`
+      : `DOCKER_BUILDKIT=0 ${coreUpCmdBase}`;
+    const coreRetry = await this.execAndCaptureResult(coreUpCmd, cwd);
+    if (coreRetry.ok) {
+      this.onLog('[Docker] Compose stack started successfully without MailHog.');
+      return coreRetry;
+    }
+
+    this.onLog('[Docker] Core-services build retry failed. Attempting no-build startup for core services...', 'warning');
+    const coreNoBuildCmd = `docker compose -f "${composeFile}" up -d --no-build ${coreServiceNames.join(' ')}`;
+    const coreNoBuildRetry = await this.execAndCaptureResult(coreNoBuildCmd, cwd);
+    if (coreNoBuildRetry.ok) {
+      this.onLog('[Docker] Compose core services started successfully with --no-build (without MailHog).');
+      return coreNoBuildRetry;
+    }
+
+    const coreNoBuildOutput = `${coreNoBuildRetry.output}\n${coreNoBuildRetry.errorOutput}`;
+    const hasDbPortConflict = /0\.0\.0\.0:3306|listen tcp .*:3306: bind/i.test(coreNoBuildOutput);
+    const includesDbService = coreServiceNames.includes('db');
+    if (hasDbPortConflict && includesDbService) {
+      this.onLog('[Docker] Detected host port 3306 conflict. Retrying core services with DB host port publishing disabled...', 'warning');
+      const retryNoDbPort = await this.retryComposeWithoutDbHostPort(cwd, composeFile, coreServiceNames);
+      if (retryNoDbPort.ok) {
+        this.onLog('[Docker] Compose core services started successfully with DB host port disabled.');
+        return retryNoDbPort;
+      }
+      return retryNoDbPort;
+    }
+
+    return coreNoBuildRetry;
+  }
+
+  private async retryComposeWithoutDbHostPort(
+    cwd: string,
+    composeFile: string,
+    services: string[],
+  ): Promise<{ ok: boolean; output: string; errorOutput: string }> {
+    this.onLog('[Docker] Attempting to start without DB host port binding...');
+
+    try {
+      if (process.platform === 'win32') {
+        await this.execAndCaptureResult('netstat -ano | findstr :3306', cwd);
+        await this.execAndCaptureResult('taskkill /F /PID 3306 2>nul || echo "No process to kill"', cwd);
+      } else {
+        await this.execAndCaptureResult('lsof -i :3306 -t | xargs kill -9 2>/dev/null || echo "No process to kill"', cwd);
+      }
+    } catch {
+      this.onLog('[Docker] Could not attempt to free port 3306 from local processes.');
+    }
+
+    const overrideFileName = '.project-assistant.db-port-override.yml';
+    const overridePath = path.join(cwd, overrideFileName);
+
+    const overrideContent = [
+      'services:',
+      '  db:',
+      '    expose:',
+      '      - "3306"',
+      '    ports: !override []',
+      '',
+    ].join('\n');
+
+    fs.writeFileSync(overridePath, overrideContent, 'utf8');
+
+    try {
+      const cmd = `docker compose -f "${composeFile}" -f "${overrideFileName}" up -d --no-build --force-recreate ${services.join(' ')}`;
+      const result = await this.execAndCaptureResult(cmd, cwd);
+      const resultText = this.composeResultText(result);
+
+      if (result.ok) {
+        this.onLog('[Docker] Services started without DB host port binding.');
+        return result;
+      }
+
+      if (this.extractDockerPortConflict(resultText) !== 3306) {
+        return result;
+      }
+
+      this.onLog('[Docker] Still seeing 3306 conflict. Trying alternative: run only app and webserver without db rebuild.');
+      const appWebonly = services.filter((s) => s !== 'db');
+      if (appWebonly.length === 0) {
+        return result;
+      }
+
+      const appWebResult = await this.execAndCaptureResult(
+        `docker compose -f "${composeFile}" -f "${overrideFileName}" up -d --no-build ${appWebonly.join(' ')}`,
+        cwd,
+      );
+      const appWebText = this.composeResultText(appWebResult);
+
+      if (appWebResult.ok) {
+        return appWebResult;
+      }
+
+      const conflictPort = this.extractDockerPortConflict(appWebText);
+      if (conflictPort && conflictPort > 1000) {
+        this.onLog(`[Docker] Detected port ${conflictPort} conflict. Attempting to map to alternate ports...`, 'warning');
+        return await this.retryComposeWithAlternatePorts(
+          cwd,
+          composeFile,
+          overrideFileName,
+          appWebonly,
+          conflictPort,
+        );
+      }
+
+      return appWebResult;
+    } finally {
+      try {
+        fs.unlinkSync(overridePath);
+      } catch {
+        // ignore cleanup failures
+      }
+    }
+  }
+
+  private composeResultText(result: { output: string; errorOutput: string }): string {
+    return `${result.output || ''}\n${result.errorOutput || ''}`;
+  }
+
+  private isDockerPortConflict(text: string, specificPort?: number): boolean {
+    const normalized = String(text ?? '');
+    if (!normalized) {
+      return false;
+    }
+
+    const portConflict = this.extractDockerPortConflict(normalized);
+    if (specificPort) {
+      return portConflict === specificPort;
+    }
+
+    return portConflict !== undefined;
+  }
+
+  private extractDockerPortConflict(text: string): number | undefined {
+    const normalized = String(text ?? '');
+    if (!normalized) {
+      return undefined;
+    }
+
+    const portConflictMatch = normalized.match(/Bind for 0\.0\.0\.0:(\d+)|port (\d+) .* failed|bind.*:(\d+)|:(\d+).*already allocated|Ports are not available: exposing port TCP 0\.0\.0\.0:(\d+)/i);
+    if (!portConflictMatch) {
+      return undefined;
+    }
+
+    const conflictPort = portConflictMatch[1] || portConflictMatch[2] || portConflictMatch[3] || portConflictMatch[4] || portConflictMatch[5];
+    if (!conflictPort) {
+      return undefined;
+    }
+
+    const parsed = parseInt(conflictPort, 10);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  private async retryComposeWithAlternatePorts(
+    cwd: string,
+    composeFile: string,
+    dbOverrideFileName: string,
+    services: string[],
+    conflictPort: number,
+  ): Promise<{ ok: boolean; output: string; errorOutput: string }> {
+    this.onLog('[Docker] Stopping failed services before retry...');
+    try {
+      await this.execAndCaptureResult(
+        `docker compose -f "${composeFile}" -f "${dbOverrideFileName}" down`,
+        cwd,
+      );
+    } catch {
+      // Ignore errors, just proceed with retry.
+    }
+
+    const alternatePorts = [
+      conflictPort + 1,
+      8888, 9000, 3000, 5000, 8080, 9090, 4000, 6000, 7000,
+    ].filter((p) => p !== conflictPort && p > 1000 && p < 65535);
+
+    for (const altPort of alternatePorts) {
+      this.onLog(`[Docker] Trying to map services to port ${altPort}...`);
+
+      const portOverrideFileName = `.project-assistant.port-${altPort}-override.yml`;
+      const portOverridePath = path.join(cwd, portOverrideFileName);
+      const overrideLines: string[] = [
+        'services:',
+        '  db:',
+        '    expose:',
+        '      - "3306"',
+        '    ports: !override []',
+      ];
+
+      if (services.includes('webserver')) {
+        overrideLines.push(
+          '  webserver:',
+          '    ports: !override',
+          `      - "${altPort}:80"`,
+        );
+      }
+
+      if (services.includes('app')) {
+        overrideLines.push(
+          '  app:',
+          '    ports: !override',
+          `      - "${altPort + 1}:8000"`,
+        );
+      }
+
+      fs.writeFileSync(portOverridePath, `${overrideLines.join('\n')}\n`, 'utf8');
+
+      try {
+        await this.execAndCaptureResult(
+          `docker compose -f "${composeFile}" -f "${dbOverrideFileName}" -f "${portOverrideFileName}" down`,
+          cwd,
+        );
+
+        const cmd = `docker compose -f "${composeFile}" -f "${dbOverrideFileName}" -f "${portOverrideFileName}" up -d --no-build ${services.join(' ')}`;
+        const result = await this.execAndCaptureResult(cmd, cwd);
+        if (result.ok) {
+          this.onLog(`[Docker] Successfully started services with webserver on port ${altPort}.`);
+          this.mappedWebserverPort = altPort;
+          return result;
+        }
+
+        const failedPort = this.extractDockerPortConflict(this.composeResultText(result));
+        if (failedPort) {
+          this.onLog(`[Docker] Port ${failedPort} also in use, trying next...`);
+          continue;
+        }
+
+        return result;
+      } finally {
+        try {
+          fs.unlinkSync(portOverridePath);
+        } catch {
+          // ignore cleanup
+        }
+      }
+    }
+
+    this.onLog('[Docker] All alternate ports exhausted. No available port found.', 'error');
+    return {
+      ok: false,
+      output: '',
+      errorOutput: 'All alternate ports failed: no available port in range 8001-7000.',
+    };
+  }
+
+  private applyWindowsDockerIgnoreWorkaround(cwd: string, composeOutput: string): boolean {
+    const dockerIgnorePath = path.join(cwd, '.dockerignore');
+    const existing = fs.existsSync(dockerIgnorePath)
+      ? fs.readFileSync(dockerIgnorePath, 'utf8')
+      : '';
+
+    const patterns = new Set<string>(['public/storage', 'project/public/storage']);
+
+    const badPathMatch = composeOutput.match(/Can't add file\s+([^\r\n]+)\s+to tar/i);
+    if (badPathMatch) {
+      const rawPath = badPathMatch[1].trim().replace(/^\\\\\?\\/, '');
+      const normalized = rawPath.replace(/\\/g, '/');
+      const lowerCwd = cwd.replace(/\\/g, '/').toLowerCase();
+      const lowerPath = normalized.toLowerCase();
+      if (lowerPath.startsWith(lowerCwd + '/')) {
+        const rel = normalized.slice(lowerCwd.length + 1);
+        if (rel) {
+          patterns.add(rel);
+        }
+      }
+    }
+
+    const toAdd = Array.from(patterns).filter((pattern) => !this.dockerIgnoreContainsPattern(existing, pattern));
+    if (!toAdd.length) {
+      return false;
+    }
+
+    const block = [
+      '',
+      '# Added by Project Assistant to avoid Windows Docker tar file mode issues',
+      ...toAdd,
+      '',
+    ].join('\n');
+
+    fs.writeFileSync(dockerIgnorePath, `${existing}${block}`, 'utf8');
+    this.onLog(`[Docker] Updated .dockerignore with: ${toAdd.join(', ')}`);
+    return true;
+  }
+
+  private dockerIgnoreContainsPattern(content: string, pattern: string): boolean {
+    const normalizedPattern = pattern.trim().toLowerCase();
+    if (!normalizedPattern) {
+      return true;
+    }
+    return content
+      .split(/\r?\n/)
+      .map((line) => line.trim().toLowerCase())
+      .some((line) => line === normalizedPattern);
+  }
+
+  private async dockerImageExists(image: string, cwd: string): Promise<boolean> {
+    const inspect = await this.execAndCaptureResult(`docker image inspect ${image}`, cwd);
+    return inspect.ok;
+  }
+
+  private async isContainerRunning(containerName: string, cwd: string): Promise<boolean> {
+    const result = await this.execAndCapture(`docker inspect -f "{{.State.Running}}" ${containerName}`, cwd);
+    return result.trim().toLowerCase() === 'true';
+  }
+
+  private async resolveDockerImage(ctx: InstallContext, cwd: string): Promise<string> {
+    if (ctx.projectType === 'static') return 'python:3.11-bookworm'; // serves with python http.server
+    if (ctx.projectType === 'nodejs') return 'node:20-bookworm';
+    if (ctx.projectType === 'python') return 'python:3.11-bookworm';
+    if (ctx.projectType === 'php') return fs.existsSync(path.join(cwd, 'composer.json')) ? 'composer:2' : 'php:8.2-cli';
+    if (ctx.projectType === 'java') {
+      const tool = await this.resolveJavaBuildToolForDocker(cwd);
+      if (!tool) this.onLog('[Warning] Could not detect pom.xml/build.gradle. Defaulting Java Docker image to Maven.', 'warning');
+      return tool === 'gradle' ? 'gradle:8.7-jdk17' : 'maven:3.9-eclipse-temurin-17';
+    }
+    if (ctx.projectType === 'ruby') return 'ruby:3.3';
+    if (ctx.projectType === 'go') return 'golang:1.22';
+    return 'ubuntu:24.04';
+  }
+
+  private async resolveDockerScript(ctx: InstallContext, cwd: string, port: number): Promise<string> {
+    if (ctx.projectType === 'static') return `python -m http.server ${port}`;
+    if (ctx.projectType === 'nodejs') {
+      const install = fs.existsSync(path.join(cwd, 'package-lock.json')) ? 'npm ci' : 'npm install';
+      const runCmd = (await this.resolveRunCommand(ctx, false)).replace(/^pnpm\s+|^yarn\s+/, 'npm ');
+      return `${install} && ${runCmd}`;
+    }
+    if (ctx.projectType === 'python') {
+      const install = fs.existsSync(path.join(cwd, 'requirements.txt')) ? 'pip install -r requirements.txt && ' : '';
+      const runCmd = (await this.resolveRunCommand(ctx, false)).replace(/^"?[A-Za-z]:[^\s"]*python(?:\.exe)?"?\s+/i, 'python ');
+      return `${install}${runCmd}`;
+    }
+    if (ctx.projectType === 'php') {
+      const composerInstall = fs.existsSync(path.join(cwd, 'composer.json')) ? 'composer install && ' : '';
+      if (fs.existsSync(path.join(cwd, 'artisan'))) {
+        const laravelBootstrap = [
+          '[ -f .env ] || cp .env.example .env',
+          'chmod -R 777 storage bootstrap/cache || true',
+          'php artisan key:generate --force || true',
+          'php artisan migrate --seed --force || true',
+        ].join(' && ');
+        return `${composerInstall}${laravelBootstrap} && php artisan serve --host=0.0.0.0 --port=${port}`;
+      }
+      if (fs.existsSync(path.join(cwd, 'public', 'index.php'))) return `${composerInstall}php -S 0.0.0.0:${port} -t public public/index.php`;
+      if (fs.existsSync(path.join(cwd, 'index.php'))) return `${composerInstall}php -S 0.0.0.0:${port} -t . index.php`;
+      const entry = this.findPhpEntry(cwd);
+      return `${composerInstall}php -S 0.0.0.0:${port} -t ${path.dirname(entry) === '.' ? '.' : path.dirname(entry)} ${entry}`;
+    }
+    if (ctx.projectType === 'java') {
+      const tool = await this.resolveJavaBuildToolForDocker(cwd);
+      if (!tool || tool === 'maven') return `mvn spring-boot:run -q -Dspring-boot.run.arguments=--server.port=${port}`;
+      const hasSpring = await this.fileContains(cwd, 'build.gradle', 'spring-boot') || await this.fileContains(cwd, 'build.gradle.kts', 'spring-boot');
+      return hasSpring ? `gradle bootRun --no-daemon --args='--server.port=${port}'` : 'gradle run --no-daemon';
+    }
+    if (ctx.projectType === 'ruby') {
+      if (fs.existsSync(path.join(cwd, 'Gemfile'))) {
+        const rails = fs.existsSync(path.join(cwd, 'config', 'application.rb'));
+        return rails ? `bundle install && bundle exec rails server -b 0.0.0.0 -p ${port}` : `bundle install && bundle exec ruby ${this.findRubyEntry(cwd)}`;
+      }
+      return `ruby ${this.findRubyEntry(cwd)}`;
+    }
+    if (ctx.projectType === 'go') { const mainFile = this.findGoMain(cwd); return mainFile ? `go run ${mainFile}` : 'go run .'; }
+    return 'sleep infinity';
+  }
+
+  private findRubyEntry(cwd: string): string {
+    for (const f of ['app.rb', 'main.rb', 'server.rb']) { if (fs.existsSync(path.join(cwd, f))) return f; }
+    return 'main.rb';
+  }
+
+  private runCommand(cmd: string, cwd: string, projectId: string): Promise<boolean> {
+    return new Promise(resolve => {
+      if (this.cancelled) { resolve(false); return; }
+      this.onLog(`[Run] ${cmd}`);
+      const commandOutput: string[] = [];
+      const proc = cp.spawn(cmd, [], { cwd, shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      proc.stdout?.on('data', (d: Buffer) => d.toString().split('\n').filter(Boolean).forEach(line => { const trimmed = line.trim(); if (trimmed) { commandOutput.push(trimmed); if (commandOutput.length > 250) commandOutput.shift(); } this.onLog(trimmed); }));
+      proc.stderr?.on('data', (d: Buffer) => d.toString().split('\n').filter(Boolean).forEach(line => { const trimmed = line.trim(); if (trimmed) { commandOutput.push(trimmed); if (commandOutput.length > 250) commandOutput.shift(); } this.onLog(trimmed, 'stderr'); }));
+      proc.on('close', code => { this.lastCommandOutput = commandOutput.join('\n'); resolve(code === 0); });
+      proc.on('error', err => { this.lastCommandOutput = commandOutput.join('\n'); this.onLog(`[Error] ${err.message}`, 'error'); resolve(false); });
+    });
+  }
+
+  private waitForPort(port: number, timeoutMs: number): Promise<boolean> {
+    return new Promise(resolve => {
+      const start = Date.now();
+      const net = require('net');
+      const check = () => {
+        if (Date.now() - start > timeoutMs) { resolve(false); return; }
+        const sock = new net.Socket();
+        sock.setTimeout(500);
+        sock.on('connect', () => { sock.destroy(); resolve(true); });
+        sock.on('error', () => { sock.destroy(); setTimeout(check, 1000); });
+        sock.on('timeout', () => { sock.destroy(); setTimeout(check, 1000); });
+        sock.connect(port, '127.0.0.1');
+      };
+      check();
+    });
+  }
+
+  private waitForHttpResponse(port: number, timeoutMs: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const http = require('http');
+
+      const check = () => {
+        if (Date.now() - start > timeoutMs) {
+          resolve(false);
+          return;
+        }
+
+        const req = http.get(
+          {
+            hostname: '127.0.0.1',
+            port,
+            path: '/',
+            timeout: 1500,
+          },
+          (res: any) => {
+            res.resume();
+            // Any HTTP response means the app is reachable.
+            if (typeof res.statusCode === 'number' && res.statusCode >= 100) {
+              resolve(true);
+              return;
+            }
+            setTimeout(check, 1000);
+          }
+        );
+
+        req.on('timeout', () => {
+          req.destroy();
+          setTimeout(check, 1000);
+        });
+
+        req.on('error', () => {
+          setTimeout(check, 1000);
+        });
+      };
+
+      check();
+    });
+  }
+
+  private async isPortAvailable(port: number): Promise<boolean> {
+    const hasActiveListener = (await this.canConnectToPort(port, '127.0.0.1')) || (await this.canConnectToPort(port, '::1'));
+    if (hasActiveListener) return false;
+    const canBindV4 = await this.canBindPort(port, '0.0.0.0');
+    const canBindV6 = await this.canBindPort(port, '::');
+    return canBindV4 || canBindV6;
+  }
+
+  private canConnectToPort(port: number, host: string): Promise<boolean> {
+    return new Promise(resolve => {
+      const net = require('net');
+      const socket = new net.Socket();
+      let resolved = false;
+      const finish = (value: boolean) => { if (!resolved) { resolved = true; socket.destroy(); resolve(value); } };
+      socket.setTimeout(400);
+      socket.once('connect', () => finish(true));
+      socket.once('timeout', () => finish(false));
+      socket.once('error', () => finish(false));
+      socket.connect(port, host);
+    });
+  }
+
+  private canBindPort(port: number, host: string): Promise<boolean> {
+    return new Promise(resolve => {
+      const net = require('net');
+      const server = net.createServer();
+      let resolved = false;
+      const finish = (value: boolean) => { if (!resolved) { resolved = true; resolve(value); } };
+      server.once('error', () => finish(false));
+      server.once('listening', () => { server.close(() => finish(true)); });
+      server.listen(port, host);
+    });
+  }
+
+  private async findAvailablePort(startPort: number, maxAttempts: number = 50): Promise<number | null> {
+    for (let i = 0; i < maxAttempts; i += 1) {
+      const candidate = startPort + i;
+      if (await this.isPortAvailable(candidate)) return candidate;
+    }
+    return null;
+  }
+
+  private async reportProgress(projectId: string, progress: number, step: string): Promise<void> {
+    this.onLog(`[${progress}%] ${step}`);
+    if (this.backendSessionExpired) return;
+    try {
+      await this.apiClient.post(`/api/projects/${projectId}/install-progress`, { progress, step });
+    } catch (err: any) {
+      if (err?.response?.status === 401) { this.backendSessionExpired = true; this.onLog('[Warning] Session expired — progress will not sync to dashboard', 'stderr'); }
+    }
+  }
+
+  private async reportComplete(projectId: string, success: boolean, port?: number, error?: string): Promise<void> {
+    if (this.backendSessionExpired) { this.onLog('[Warning] Skipping completion sync because session is expired.', 'stderr'); return; }
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try { await this.apiClient.post(`/api/projects/${projectId}/install-complete`, { success, port, error }); return; } catch (err: any) {
+        if (err?.response?.status === 401) { this.backendSessionExpired = true; this.onLog('[Warning] Session expired — completion status will not sync to dashboard', 'stderr'); return; }
+        if (attempt === 3) this.onLog(`[Warning] Could not report completion to backend after ${attempt} attempts`, 'stderr');
+        else await new Promise(r => setTimeout(r, attempt * 1000));
+      }
+    }
+  }
+}

@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { jsPDF } from 'jspdf'
 import { userApi } from '../api/client'
 import TechBadge from './TechBadge'
 import '../styles/ProjectsList.css'
@@ -24,45 +23,35 @@ function formatDate(iso) {
   })
 }
 
-function handleDownload(project) {
-  const doc = new jsPDF()
-  const pageWidth = doc.internal.pageSize.getWidth()
-  const maxTextWidth = pageWidth - 28
 
-  let y = 20
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(18)
-  doc.text(`Project Report - ${project.name}`, 14, y)
+async function handleDownload(project) {
+  try {
+    const token = localStorage.getItem('access_token')
 
-  y += 10
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(11)
-  doc.text(`Generated: ${new Date().toLocaleString()}`, 14, y)
+    const res = await fetch(`/api/projects/${project.id}/report`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
 
-  y += 14
-  const sections = [
-    ['Type',       project.type    || 'N/A'],
-    ['Status',     project.status  || 'N/A'],
-    ['Port',       project.port    ? String(project.port) : 'N/A'],
-    ['Created at', project.created_at ? formatDate(project.created_at) : 'N/A'],
-  ]
-
-  sections.forEach(([label, value]) => {
-    const content = `${label}: ${value}`
-    const lines = doc.splitTextToSize(content, maxTextWidth)
-
-    if (y + lines.length * 7 > 285) {
-      doc.addPage()
-      y = 20
+    if (res.status === 404) {
+      alert('No report available yet. Run an installation first.')
+      return
     }
 
-    doc.text(lines, 14, y)
-    y += lines.length * 7 + 2
-  })
+    if (!res.ok) throw new Error('Download failed')
 
-  doc.save(`${project.name}-report.pdf`)
+    const blob = await res.blob()
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
+    a.download = `stack-report-${project.name}.pdf`
+    a.click()
+    URL.revokeObjectURL(url)
+
+  } catch (err) {
+    console.error('Report download failed:', err)
+    alert('Failed to download report. Please try again.')
+  }
 }
-
 // ── Project card ───────────────────────────────────────────────────────────────
 function ProjectCard({ project, onDeleteRequest }) {
   const [open, setOpen] = useState(false)

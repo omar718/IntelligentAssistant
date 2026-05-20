@@ -1,0 +1,75 @@
+"""
+app/core/execution/installation_writer.py
+
+Writes a row to installation_history at the end of every install run
+(success or failure). Called from install_project task.
+"""
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
+
+
+def record(
+    project_id: str,
+    started_at: datetime,
+    steps: list,
+    errors: list,
+    success: bool,
+    resolution_used: str,          # "local" | "venv" | "nvm" | "container"
+):
+    """
+    Persist an InstallationHistory row synchronously (called from Celery worker).
+    Safe to call even if the DB write fails — it logs and continues.
+    """
+    try:
+        from app.db.session import get_sync_session
+        from app.models.installation_history import InstallationHistory
+
+        with get_sync_session() as db:
+            row = InstallationHistory(
+                project_id=project_id,
+                started_at=started_at,
+                completed_at=datetime.now(timezone.utc),
+                success=success,
+                steps=steps,
+                errors=errors,
+                resolution_used=resolution_used,
+            )
+            db.add(row)
+            db.commit()
+            logger.info(
+                "InstallationHistory recorded for %s (success=%s)", project_id, success
+            )
+    except Exception as exc:
+        logger.warning("Failed to write InstallationHistory: %s", exc)
+
+
+def steps_from_result(install_result) -> list:
+    """Convert InstallResult.steps to a JSON-serialisable list."""
+    if install_result is None:
+        return []
+    return [
+        {
+            "action": s.action,
+            "status": s.status,
+            "duration_ms": s.duration_ms,
+            "error": s.error,
+        }
+        for s in (install_result.steps or [])
+    ]
+
+
+def errors_from_result(install_result, extra_errors: Optional[List[str]] = None) -> list:
+    """Collect all step errors + any extra error strings into a JSON list."""
+    errors = []
+    if install_result:
+        for s in (install_result.steps or []):
+            if s.error:
+                errors.append({"step": s.action, "message": s.error})
+    for msg in (extra_errors or []):
+        errors.append({"step": "task", "message": msg})
+    return errors

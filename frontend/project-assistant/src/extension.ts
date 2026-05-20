@@ -17,10 +17,16 @@ import { LocalInstaller, type RuntimeMissingInfo, type ConflictResolutionChoice,
 import { ApiOutputViewProvider } from './webviews/apiOutputProvider';
 
 
+type TroubleshootMode = 'auto' | 'guided';
+
 let authManager: AuthManager;
 let lastRunningUrl: string | undefined;
 const launchedProjects = new Map<string, ChildProcess>();
 let pendingConflictResolver: ((choice: ConflictResolutionChoice) => void) | undefined;
+let pendingTroubleshootResolver: ((choice: TroubleshootMode) => void) | undefined;
+let pendingTroubleshootMode: TroubleshootMode | undefined;
+let queuedConflictFileChoice: string | undefined;
+let activeInstaller: LocalInstaller | undefined;
 
 const PENDING_INSTALL_KEY = 'pendingInstallProjectId';
 const LAST_PICKED_FOLDER_KEY = 'lastPickedCloneFolder';
@@ -94,6 +100,107 @@ async function launchInstalledProject(
     return rawPath;
   };
 
+  const shouldBuildBeforeNodeStart = (hostPath: string, runCommand: string): boolean => {
+    if (!/^(?:npm(?:\s+run)?|pnpm|yarn)\s+start(?:\s+.*)?$/i.test(runCommand.trim())) {
+      return false;
+    }
+
+    const packageJsonPath = path.join(hostPath, 'package.json');
+    if (!fs.existsSync(packageJsonPath)) {
+      return false;
+    }
+
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as {
+        scripts?: Record<string, string>;
+      };
+      const startScript = packageJson.scripts?.start;
+      if (typeof startScript !== 'string') {
+        return false;
+      }
+
+      const nodeEntryMatch = startScript.match(/\bnode(?:\.exe)?\s+([^&|;]+)/i);
+      if (nodeEntryMatch) {
+        const rawEntry = nodeEntryMatch[1].trim().replace(/^['"]|['"]$/g, '');
+        const resolvedEntry = rawEntry.replace(/^\.\//, '');
+        if (resolvedEntry && !fs.existsSync(path.join(hostPath, resolvedEntry))) {
+          return true;
+        }
+      }
+
+      if (/\b(dist|build)\/|\b(dist|build)\\/i.test(startScript)) {
+        const referencedSegment = startScript.match(/(?:dist|build)[^\s"'&|;]*/i)?.[0] ?? '';
+        if (referencedSegment && !fs.existsSync(path.join(hostPath, referencedSegment))) {
+          return true;
+        }
+      }
+    } catch {
+      return false;
+    }
+
+    return false;
+  };
+
+  const buildCommandForStartCommand = (hostPath: string, runCommand: string): string | undefined => {
+    const trimmed = runCommand.trim();
+    const packageJsonPath = path.join(hostPath, 'package.json');
+    const packageJson = fs.existsSync(packageJsonPath)
+      ? JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as { scripts?: Record<string, string> }
+      : undefined;
+    const hasCompileScript = typeof packageJson?.scripts?.compile === 'string' && packageJson.scripts.compile.trim().length > 0;
+    const hasBuildScript = typeof packageJson?.scripts?.build === 'string' && packageJson.scripts.build.trim().length > 0;
+
+    if (/^npm\s+run\s+start(?:\s+.*)?$/i.test(trimmed)) {
+      if (hasCompileScript) {
+        return 'npm run compile';
+      }
+      if (hasBuildScript) {
+        return 'npm run build';
+      }
+      return undefined;
+    }
+    if (/^npm\s+start(?:\s+.*)?$/i.test(trimmed)) {
+      if (hasCompileScript) {
+        return 'npm run compile';
+      }
+      if (hasBuildScript) {
+        return 'npm run build';
+      }
+      return undefined;
+    }
+    if (/^pnpm\s+start(?:\s+.*)?$/i.test(trimmed)) {
+      if (hasCompileScript) {
+        return 'pnpm compile';
+      }
+      if (hasBuildScript) {
+        return 'pnpm build';
+      }
+      return undefined;
+    }
+    if (/^yarn\s+start(?:\s+.*)?$/i.test(trimmed)) {
+      if (hasCompileScript) {
+        return 'yarn compile';
+      }
+      if (hasBuildScript) {
+        return 'yarn build';
+      }
+      return undefined;
+    }
+    return undefined;
+  };
+
+  const augmentNodeStartCommand = (hostPath: string, runCommand: string): string => {
+    if (shouldBuildBeforeNodeStart(hostPath, runCommand)) {
+      const buildCommand = buildCommandForStartCommand(hostPath, runCommand);
+      if (buildCommand) {
+        outputChannel.appendLine('[Launch] Detected missing build output for node start command; running build first.');
+        return `${buildCommand} && ${runCommand}`;
+      }
+    }
+
+    return runCommand;
+  };
+
   if (launchedProjects.has(projectId)) {
     outputChannel.appendLine(`[Launch] Project ${projectId} is already launched in this session.`);
     return {};
@@ -123,7 +230,6 @@ async function launchInstalledProject(
     (project.type === 'python' && metadata.entry_point ? `python ${metadata.entry_point}` : undefined) ??
     (project.type === 'nodejs' && metadata.entry_point ? `node ${metadata.entry_point}` : undefined) ??
     (metadata.detected_pm === 'npm' ? 'npm start' : undefined);
-
   const launchPort =
     metadata.launch_port ??
     project.port ??
@@ -141,11 +247,14 @@ async function launchInstalledProject(
     throw new Error('Missing run command for launch');
   }
 
+  const launchCommand: string =
+    project.type === 'nodejs' ? augmentNodeStartCommand(hostPath, runCommand) : runCommand;
+
   outputChannel.appendLine(`[Launch] Starting project ${projectId}`);
   outputChannel.appendLine(`[Launch] cwd=${hostPath}`);
-  outputChannel.appendLine(`[Launch] command=${runCommand}`);
+  outputChannel.appendLine(`[Launch] command=${launchCommand}`);
 
-  const child = spawn(runCommand, {
+  const child = spawn(launchCommand, {
     cwd: hostPath,
     shell: true,
     detached: true,
@@ -354,6 +463,9 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
   // ─── Output Channel ───────────────────────────────────────────────────────
   const apiOutputProvider = new ApiOutputViewProvider(context.extensionUri, (action, payload) => {
     switch (action) {
+      case 'analyzeWorkspace':
+        void vscode.commands.executeCommand('project-assistant.analyzeWorkspace');
+        return;
       case 'login':
         void vscode.commands.executeCommand('project-assistant.login');
         return;
@@ -375,6 +487,41 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
         if (pendingConflictResolver) {
           pendingConflictResolver('manual');
           pendingConflictResolver = undefined;
+        }
+        return;
+      case 'chooseAutoTroubleshoot':
+        if (pendingTroubleshootResolver) {
+          pendingTroubleshootResolver('auto');
+          pendingTroubleshootResolver = undefined;
+        }
+        return;
+      case 'chooseGuidedTroubleshoot':
+        if (pendingTroubleshootResolver) {
+          pendingTroubleshootResolver('guided');
+          pendingTroubleshootResolver = undefined;
+        }
+        return;
+      case 'specifyFile':
+        if (pendingConflictResolver && payload && payload.trim().length > 0) {
+          pendingConflictResolver({ action: 'specifyFile', value: payload.trim() });
+          pendingConflictResolver = undefined;
+        } else if (!pendingConflictResolver) {
+          if (payload && payload.trim().length > 0) {
+            queuedConflictFileChoice = payload.trim();
+            outputChannel.appendLine(`[Conflict] Queued file name: ${queuedConflictFileChoice}. It will be applied when the prompt is ready.`);
+          } else {
+            outputChannel.appendLine('[Conflict] No active conflict prompt. Start/retry installation, then submit the file name again.');
+          }
+        } else {
+          outputChannel.appendLine('[Conflict] Please provide a non-empty Python file name (for example manage.py).');
+        }
+        return;
+      case 'cancelInstall':
+        if (activeInstaller) {
+          outputChannel.appendLine('[Assistant] Cancel requested for the active installation.');
+          activeInstaller.cancel();
+          apiOutputProvider.clearInstallAction();
+          apiOutputProvider.setInstallInProgress(false);
         }
         return;
     }
@@ -415,6 +562,7 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
   // ─── Online / Offline Callbacks ───────────────────────────────────────────
   let pendingInstallHandled = false;
   let pendingInstallInProgress = false;
+  let analyzeInProgress = false;
 
   const maybeResumePendingInstall = async () => {
     if (pendingInstallHandled || pendingInstallInProgress) {
@@ -430,40 +578,10 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
         if (!pendingFolderPath) {
           return;
         }
-
-        const action = await vscode.window.showWarningMessage(
-          `Project opened from ${path.basename(pendingFolderPath)} without project id. Enter a project id to continue installation.`,
-          'Enter Project ID',
-          'Open Output',
-          'Dismiss',
-        );
-
-        if (action === 'Open Output') {
-          outputChannel.show(true);
-        }
-
-        if (action !== 'Enter Project ID') {
-          return;
-        }
-
-        const manualProjectId = await vscode.window.showInputBox({
-          title: 'Continue installation',
-          prompt: 'Enter project id',
-          placeHolder: 'proj_xxxxxxxx',
-          ignoreFocusOut: true,
-        });
-
-        if (!manualProjectId?.trim()) {
-          vscode.window.showWarningMessage('No project id entered. Installation remains pending.');
-          return;
-        }
-
-        await setPendingInstallId(context, manualProjectId.trim());
         outputChannel.appendLine(
-          `[Install] Manually linked pending folder ${pendingFolderPath} to project ${manualProjectId.trim()}`
+          `[Install] Pending install skipped: folder "${path.basename(pendingFolderPath)}" has no project id.`
         );
-        await setPendingInstallFolderPath(context, undefined);
-        return maybeResumePendingInstall();
+        return;
       }
 
       await setPendingInstallFolderPath(context, undefined);
@@ -479,11 +597,164 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
         outputChannel,
         statusBar,
         apiOutputProvider,
-        true,
+        false,
       );
       pendingInstallHandled = started;
     } finally {
       pendingInstallInProgress = false;
+    }
+  };
+
+  const analyzeOpenWorkspace = async (): Promise<void> => {
+    if (analyzeInProgress) {
+      outputChannel.appendLine('[Analyze] Analysis is already in progress.');
+      return;
+    }
+
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+      vscode.window.showWarningMessage('Open a project folder in VS Code before running Analyse.');
+      return;
+    }
+
+    let usePublicApi = false;
+    if (!authManager.isAuthenticated()) {
+      const action = await vscode.window.showWarningMessage(
+        'In order to get your stack report you must sign in',
+        'Sign In',
+        'Analyze anyway',
+      );
+      if (action === 'Sign In') {
+        void vscode.commands.executeCommand('project-assistant.login');
+        return;
+      }
+      if (action === 'Analyze anyway') {
+        usePublicApi = true;
+      } else {
+        return;
+      }
+    }
+
+    analyzeInProgress = true;
+    const targetFolder = workspaceFolders[0].uri.fsPath;
+    const ANALYZE_REQUEST_TIMEOUT_MS = 120_000;
+
+    const mapHostPathToContainer = (hostPath: string): string => {
+      const normalized = hostPath.replace(/\\/g, '/');
+
+      const usersPrefix = 'c:/users/';
+      if (normalized.toLowerCase().startsWith(usersPrefix)) {
+        return `/hostusers/${normalized.slice(usersPrefix.length)}`;
+      }
+
+      const tmpPrefix = 'c:/tmp/intelligent-assistant/';
+      if (normalized.toLowerCase().startsWith(tmpPrefix)) {
+        return `/tmp/intelligent-assistant/${normalized.slice(tmpPrefix.length)}`;
+      }
+
+      return normalized;
+    };
+
+    const candidatePaths = [targetFolder];
+    const mappedCandidate = mapHostPathToContainer(targetFolder);
+    if (mappedCandidate !== targetFolder) {
+      candidatePaths.push(mappedCandidate);
+    }
+
+    try {
+      outputChannel.show(false);
+      outputChannel.appendLine(`[Analyze] Starting analysis for open workspace: ${targetFolder}`);
+      statusBar.text = '$(sync~spin) Analyzing workspace…';
+      statusBar.command = undefined;
+      statusBar.show();
+
+      let projectId: string | undefined;
+      let lastError: any;
+
+      for (let i = 0; i < candidatePaths.length; i += 1) {
+        const candidatePath = candidatePaths[i];
+        const attemptTaskId = `task_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+        outputChannel.appendLine(`[Analyze] Attempt ${i + 1}/${candidatePaths.length} using path: ${candidatePath}`);
+        outputChannel.appendLine(`[Analyze] Task id: ${attemptTaskId}`);
+
+        try {
+          const client = usePublicApi ? authManager.getPublicApiClient() : authManager.getApiClient();
+          const createRes = await client.post<{
+            project_id?: string;
+          }>('/api/projects', {
+            source: {
+              type: 'local',
+              path: candidatePath,
+            },
+            task_id: attemptTaskId,
+          }, {
+            timeout: ANALYZE_REQUEST_TIMEOUT_MS,
+          });
+
+          projectId = createRes.data?.project_id;
+          if (!projectId) {
+            throw new Error('Backend did not return a project id after analysis.');
+          }
+          break;
+        } catch (err: any) {
+          lastError = err;
+          const status = err?.response?.status;
+          const detail = String(err?.response?.data?.detail ?? err?.message ?? '').toLowerCase();
+          const canRetryPath = status === 400 && detail.includes('path does not exist') && i < candidatePaths.length - 1;
+
+          if (canRetryPath) {
+            outputChannel.appendLine('[Analyze] Backend reported missing path. Retrying with container-compatible path...');
+            continue;
+          }
+
+          throw err;
+        }
+      }
+
+      if (!projectId) {
+        throw lastError ?? new Error('Analysis failed for all local path candidates.');
+      }
+
+      if (!projectId) {
+        throw new Error('Backend did not return a project id after analysis.');
+      }
+
+      outputChannel.appendLine(`[Analyze] Analysis complete. Project id: ${projectId}`);
+      await setPendingInstallId(context, projectId);
+      await setPendingInstallFolderPath(context, targetFolder);
+
+      const started = await triggerInstallFromExtension(
+        context,
+        projectId,
+        authManager,
+        outputChannel,
+        statusBar,
+        apiOutputProvider,
+        false,
+      );
+
+      if (!started) {
+        outputChannel.appendLine('[Analyze] Installation did not start automatically. Use retry from the console if needed.');
+      }
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const detail = err?.response?.data?.detail ?? err?.message ?? 'unknown error';
+
+      if (status === 401 || status === 403) {
+        outputChannel.appendLine('[Analyze] Session expired. Please sign in again.');
+        statusBar.text = '$(lock) Session expired';
+        statusBar.command = 'project-assistant.login';
+        statusBar.show();
+        void vscode.commands.executeCommand('project-assistant.login');
+      } else {
+        outputChannel.appendLine(`[Analyze] Failed: ${detail}`);
+        statusBar.text = '$(error) Analyze failed';
+        statusBar.show();
+        vscode.window.showErrorMessage(`Analyse failed: ${detail}`);
+      }
+    } finally {
+      analyzeInProgress = false;
     }
   };
 
@@ -564,9 +835,9 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
 
         if (resolvedProjectId) {
           await setPendingInstallId(context, resolvedProjectId);
-          await setPendingInstallFolderPath(context, undefined);
+          await setPendingInstallFolderPath(context, resolvedFolderPath);
           outputChannel.appendLine(
-            `[OpenFolder] Pending install set for project ${resolvedProjectId}`
+            `[OpenFolder] Pending install set for project ${resolvedProjectId} at ${resolvedFolderPath}`
           );
         } else {
           await setPendingInstallFolderPath(context, resolvedFolderPath);
@@ -589,9 +860,9 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
 
             if (manualProjectId?.trim()) {
               await setPendingInstallId(context, manualProjectId.trim());
-              await setPendingInstallFolderPath(context, undefined);
+              await setPendingInstallFolderPath(context, resolvedFolderPath);
               outputChannel.appendLine(
-                `[OpenFolder] Manual projectId captured: ${manualProjectId.trim()}`
+                `[OpenFolder] Manual projectId captured: ${manualProjectId.trim()} for ${resolvedFolderPath}`
               );
             } else {
               outputChannel.appendLine('[OpenFolder] Manual projectId entry was skipped or empty.');
@@ -684,6 +955,9 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
   context.subscriptions.push(
     vscode.commands.registerCommand('project-assistant.showApiInfo', (port: number) => {
       showApiInfo(port || 6009);
+    }),
+    vscode.commands.registerCommand('project-assistant.analyzeWorkspace', async () => {
+      await analyzeOpenWorkspace();
     }),
     vscode.commands.registerCommand('project-assistant.retryInstall', async () => {
       const pendingId = await getPendingInstallId(context);
@@ -789,6 +1063,8 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
         }
 
         await authManager.login(email, password);
+        // Update webview authentication state
+        try { apiOutputProvider.setAuthenticated(authManager.isAuthenticated()); } catch {}
         await onOnline();
         vscode.window.showInformationMessage('Successfully signed in!');
         return { success: true };
@@ -805,6 +1081,7 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
     vscode.commands.registerCommand('project-assistant.logout', async () => {
       try {
         await authManager.logout();
+        try { apiOutputProvider.setAuthenticated(authManager.isAuthenticated()); } catch {}
         return { success: true };
       } catch (err: any) {
         vscode.window.showErrorMessage('Logout failed');
@@ -831,15 +1108,15 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
 
   // ─── Activate Auth ────────────────────────────────────────────────────────
   await authManager.activate();
+  // Ensure webview reflects current auth state after activation
+  try { apiOutputProvider.setAuthenticated(authManager.isAuthenticated()); } catch {}
   await maybeResumePendingInstall();
-
-  vscode.window.showInformationMessage('Project Assistant activated');
 
 } // ← closing brace for activate()
 
 async function showOptionalLoginPrompt() {
   const selection = await vscode.window.showInformationMessage(
-    "Welcome! Would you like to log in to sync your projects with DevLauncher?",
+    "Welcome! Would you like to log in to get your project stack report?",
     "Log In",
     "Maybe Later"
   );
@@ -847,6 +1124,25 @@ async function showOptionalLoginPrompt() {
   if (selection === "Log In") {
     vscode.commands.executeCommand('project-assistant.login');
   }
+}
+
+async function requestTroubleshootMode(apiOutputProvider: ApiOutputViewProvider, outputChannel: vscode.OutputChannel): Promise<TroubleshootMode> {
+  if (pendingTroubleshootMode) {
+    return pendingTroubleshootMode;
+  }
+
+  apiOutputProvider.setTroubleshootModeAction(
+    'Choose how the assistant should troubleshoot conflicts before installation starts.'
+  );
+
+  return await new Promise<TroubleshootMode>((resolve) => {
+    pendingTroubleshootResolver = (choice: TroubleshootMode) => {
+      pendingTroubleshootMode = choice;
+      outputChannel.appendLine(`[Assistant] Troubleshoot mode selected: ${choice}`);
+      apiOutputProvider.clearInstallAction();
+      resolve(choice);
+    };
+  });
 }
 
 async function triggerInstallFromExtension(
@@ -867,10 +1163,11 @@ async function triggerInstallFromExtension(
   if (requireConfirmation) {
     const answer = await vscode.window.showInformationMessage(
       'Project cloned and analyzed. Start installation now?',
-      'Install',
-      'Not now',
+      { modal: true },
+      { title: 'Install' },
+      { title: 'Close', isCloseAffordance: true },
     );
-    if (answer !== 'Install') {
+    if (answer?.title !== 'Install') {
       statusBar.text = '$(package) Click to install project';
       statusBar.command = 'project-assistant.retryInstall';
       statusBar.show();
@@ -878,6 +1175,8 @@ async function triggerInstallFromExtension(
       return false;
     }
   }
+
+  await requestTroubleshootMode(apiOutputProvider, outputChannel);
 
   // ── Fire POST /api/projects/:id/install ────────────────────────
   let taskId: string | undefined;
@@ -911,11 +1210,11 @@ async function triggerInstallFromExtension(
     }
 
     await setPendingInstallId(context, projectId);
+    pendingTroubleshootMode = undefined;
     return false;
   }
 
   await setPendingInstallId(context, undefined);
-  await setPendingInstallFolderPath(context, undefined);
 
   outputChannel.show(false);
   outputChannel.appendLine(
@@ -933,7 +1232,7 @@ async function triggerInstallFromExtension(
   let lastStatusPayload: any;
   let pollTick = 0;
   const installStartedAt = Date.now();
-  let stallWarningShown = false;
+  
 
   const readStatusDetails = (payload: any): { progress?: number; detail?: string } => {
     if (!payload || typeof payload !== 'object') {
@@ -987,6 +1286,7 @@ async function triggerInstallFromExtension(
 
         installCompleted = true;
         lastRunningUrl = url;
+        await setPendingInstallFolderPath(context, undefined);
         statusBar.text = `$(play) Running on :${displayPort}`;
         statusBar.tooltip = url;
         statusBar.command = 'project-assistant.openBrowser';
@@ -1011,7 +1311,6 @@ async function triggerInstallFromExtension(
           await vscode.env.openExternal(vscode.Uri.parse(url));
         }
       } catch (launchError: any) {
-        installCompleted = true;
         const message = launchError?.message ?? 'unknown launch error';
         outputChannel.appendLine(`[Launch] Failed: ${message}`);
         statusBar.text = '$(error) Launch failed';
@@ -1022,9 +1321,18 @@ async function triggerInstallFromExtension(
     }
 
     if (status === 'failed') {
+      // ensure completed so subsequent handlers won't reopen
       installCompleted = true;
+      await setPendingInstallFolderPath(context, undefined);
+      const cancelled = typeof error === 'string' && error.toLowerCase().includes('cancel');
       statusBar.text = '$(error) Installation failed';
       statusBar.show();
+      if (cancelled) {
+        statusBar.text = '$(circle-slash) Installation cancelled';
+        outputChannel.appendLine(`[Assistant] Cancelled: ${error ?? 'Installation cancelled by user.'}`);
+        return;
+      }
+
       outputChannel.appendLine(`[Assistant] Failed: ${error ?? ''}`);
       const action = await vscode.window.showErrorMessage(
         `Installation failed: ${error ?? 'unknown error'}`,
@@ -1033,6 +1341,78 @@ async function triggerInstallFromExtension(
       if (action === 'View logs') {
         outputChannel.show(true);
       }
+    }
+  };
+
+  const runLocalInstallation = async (
+    input: {
+      projectId: string;
+      hostPath: string;
+      projectType: string;
+      detectedPm: string;
+      runCommand?: string;
+      launchPort?: number;
+      envVars?: Record<string, string>;
+      versionConstraints?: Record<string, string>;
+      troubleshootMode?: TroubleshootMode;
+      services?: Array<{
+        name?: string;
+        path?: string;
+        role?: string;
+        project_type: string;
+        detected_pm?: string;
+        run_command?: string;
+        launch_port?: number;
+        env_vars?: Record<string, string>;
+        version_constraints?: Record<string, string>;
+      }>;
+    },
+    launchAfterInstall: boolean,
+  ): Promise<void> => {
+    const installer = new LocalInstaller(
+      auth.getApiClient(),
+      auth.getPublicApiClient(),
+      (msg: string, level?: string) => {
+        outputChannel.appendLine(level === 'error' ? `[!] ${msg}` : `  ${msg}`);
+      },
+      handleRuntimeMissing,
+      handleConflictResolution,
+      handleDockerImagePullApproval,
+    );
+
+    activeInstaller = installer;
+    apiOutputProvider.setInstallInProgress(true);
+    apiOutputProvider.clearInstallAction();
+
+    try {
+      const troubleshootMode = input.troubleshootMode ?? pendingTroubleshootMode ?? 'guided';
+      pendingTroubleshootMode = undefined;
+      const installOk = await installer.install({ ...input, troubleshootMode });
+
+      if (installOk && launchAfterInstall) {
+        const localPort = installer.getLastLaunchPort();
+        outputChannel.appendLine('[Assistant] Local install completed without backend status transition. Promoting to running state.');
+        await handleTerminalStatus('running', localPort, undefined, { skipProcessLaunch: true });
+      }
+
+      if (!installOk && !installer.wasCancelled()) {
+        outputChannel.appendLine('[Assistant] Local installation failed. Marking status as failed locally.');
+        await handleTerminalStatus(
+          'failed',
+          undefined,
+          'Local install failed (backend completion sync may have failed due to expired session).',
+          { skipProcessLaunch: true },
+        );
+      }
+
+      if (!installOk && installer.wasCancelled()) {
+        outputChannel.appendLine('[Assistant] Installation cancelled by user.');
+      }
+    } finally {
+      if (activeInstaller === installer) {
+        activeInstaller = undefined;
+      }
+      apiOutputProvider.setInstallInProgress(false);
     }
   };
 
@@ -1090,19 +1470,7 @@ async function triggerInstallFromExtension(
         statusBar.text = '$(sync~spin) Installing…';
         statusBar.show();
 
-        if (!stallWarningShown && Date.now() - installStartedAt > 120_000) {
-          stallWarningShown = true;
-          outputChannel.appendLine(
-            `[Assistant] Installation appears stalled for ${taskId ? `task ${taskId}` : `project ${projectId}`}. Status is still installing.`
-          );
-          const action = await vscode.window.showWarningMessage(
-            'Installation is taking longer than expected. Backend worker may be stuck.',
-            'View logs'
-          );
-          if (action === 'View logs') {
-            outputChannel.show(true);
-          }
-        }
+        // stall-warning removed
       }
 
       if (status === 'running') {
@@ -1122,14 +1490,11 @@ async function triggerInstallFromExtension(
       }
     }
 
-    if (pollTick === 3) {
-      outputChannel.appendLine(
-        '[Assistant] No realtime events yet; using API polling fallback until status changes.'
-      );
-    }
+    // realtime fallback notification removed
   }, 4000);
 
 ws.on('installation_progress', (data: any) => {
+  wsProgressEventCount += 1;
   const pct = data.progress ?? 0;
   const step = data.step ?? '';
   outputChannel.appendLine(`[${pct}%] ${step}`);
@@ -1137,6 +1502,7 @@ ws.on('installation_progress', (data: any) => {
 });
 
 ws.on('log', (data: any) => {
+  wsLogEventCount += 1;
   outputChannel.appendLine(`  ${data.message}`);
 });
   ws.on('conflict_detected', (data: any) => {
@@ -1168,6 +1534,26 @@ ws.on('log', (data: any) => {
     outputChannel.appendLine(`[Assistant] ${data.old_status} → ${data.new_status}`);
 
     if (data.new_status === 'running') {
+      // When no progress/log events were emitted, verify backend status once
+      // before treating the project as running to avoid false-positive WS events.
+      if (wsProgressEventCount === 0 && wsLogEventCount === 0) {
+        try {
+          const verifyRes = await apiClient.get<{ status?: string }>(`/api/projects/${projectId}/status`);
+          const verifiedStatus = String(verifyRes.data?.status ?? '').toLowerCase();
+          if (verifiedStatus !== 'running') {
+            outputChannel.appendLine(
+              `[Assistant] Ignoring transient websocket running event because backend status is still "${verifiedStatus || 'unknown'}". Continuing to wait...`
+            );
+            return;
+          }
+        } catch (verifyErr: any) {
+          outputChannel.appendLine(
+            `[Assistant] Could not verify websocket running event (${verifyErr?.message ?? 'unknown error'}). Continuing to wait for stable status...`
+          );
+          return;
+        }
+      }
+
       apiOutputProvider.clearInstallAction();
       if (wsProgressEventCount === 0 && wsLogEventCount === 0) {
         outputChannel.appendLine(
@@ -1184,7 +1570,10 @@ ws.on('log', (data: any) => {
       }
       ws.close();
       clearInterval(pollTimer);
-      await handleTerminalStatus('running', data.port);
+      const localInstallerStillActive = !!activeInstaller;
+      await handleTerminalStatus('running', data.port, undefined, {
+        skipProcessLaunch: localInstallerStillActive,
+      });
     }
 
     if (data.new_status === 'failed') {
@@ -1218,26 +1607,39 @@ ws.on('log', (data: any) => {
     if (info.installUrl) {
       outputChannel.appendLine(`  Install guide: ${info.installUrl}`);
     }
-    outputChannel.appendLine('[Paused] Waiting for your choice in the extension panel: Use Docker or I Fixed It, Retry.');
+    
+    const showFileInput = info.allowFileInput ?? false;
+    if (showFileInput) {
+      outputChannel.appendLine('[Paused] Waiting for your choice: Type the filename, use Docker, or I Fixed It, Retry.');
+    } else {
+      outputChannel.appendLine('[Paused] Waiting for your choice in the extension panel: Use Docker or I Fixed It, Retry.');
+    }
 
-    apiOutputProvider.setConflictAction(info.message, info.installUrl);
+    apiOutputProvider.setConflictAction(info.message, info.installUrl, showFileInput);
 
     return await new Promise<ConflictResolutionChoice>((resolve) => {
       pendingConflictResolver = (choice: ConflictResolutionChoice) => {
-        outputChannel.appendLine(
-          choice === 'docker'
-            ? '[Conflict] User selected Docker strategy.'
-            : '[Conflict] User selected manual fix, retrying checks.'
-        );
-
-        if (choice === 'manual') {
-          apiOutputProvider.setConflictAction('Re-checking environment...', info.installUrl);
-        } else {
+        if (typeof choice === 'object' && choice.action === 'specifyFile') {
+          outputChannel.appendLine(`[Conflict] User specified file: ${choice.value}`);
+          apiOutputProvider.setConflictAction('Retrying with specified file...', info.installUrl);
+        } else if (choice === 'docker') {
+          outputChannel.appendLine('[Conflict] User selected Docker strategy.');
           apiOutputProvider.clearInstallAction();
+        } else if (choice === 'manual') {
+          outputChannel.appendLine('[Conflict] User selected manual fix, retrying checks.');
+          apiOutputProvider.setConflictAction('Re-checking environment...', info.installUrl);
         }
 
         resolve(choice);
       };
+
+      if (showFileInput && queuedConflictFileChoice) {
+        const queuedValue = queuedConflictFileChoice;
+        queuedConflictFileChoice = undefined;
+        outputChannel.appendLine(`[Conflict] Applying queued file name: ${queuedValue}`);
+        pendingConflictResolver({ action: 'specifyFile', value: queuedValue });
+        pendingConflictResolver = undefined;
+      }
     });
   };
 
@@ -1276,39 +1678,54 @@ ws.on('log', (data: any) => {
           entry_point?: string;
           env_vars?: Record<string, string>;
           version_constraints?: Record<string, string>;
+          services?: Array<{
+            name?: string;
+            path?: string;
+            role?: string;
+            project_type: string;
+            detected_pm?: string;
+            run_command?: string;
+            launch_port?: number;
+            env_vars?: Record<string, string>;
+            version_constraints?: Record<string, string>;
+          }>;
         };
       }>(
         `/api/projects/${projectId}/status`,
       );
       if (statusRes.data.status === 'installing' && statusRes.data.metadata) {
-        outputChannel.appendLine('[WS] Install already in progress, restoring LocalInstaller');
-        
-        const installer = new LocalInstaller(
-          auth.getApiClient(),
-          (msg: string, level?: string) => {
-            outputChannel.appendLine(level === 'error' ? `[!] ${msg}` : `  ${msg}`);
-          },
-          handleRuntimeMissing,
-          handleConflictResolution,
-          handleDockerImagePullApproval,
-        );
+        const pendingFolderPath = await getPendingInstallFolderPath(context);
+        const statusHostPath = statusRes.data.metadata.host_path ?? statusRes.data.path ?? '';
+        const normalizePath = (value: string) => path.resolve(value).replace(/\\/g, '/').toLowerCase();
 
-        const installOk = await installer.install({
+        let resolvedHostPath = statusHostPath;
+        if (pendingFolderPath && fs.existsSync(pendingFolderPath)) {
+          const statusPathUsable = Boolean(statusHostPath) && fs.existsSync(statusHostPath);
+          const differsFromPending =
+            !statusHostPath ||
+            (statusPathUsable && normalizePath(statusHostPath) !== normalizePath(pendingFolderPath));
+
+          if (!statusPathUsable || differsFromPending) {
+            outputChannel.appendLine(
+              `[WS] Using pending analyzed folder for install context: ${pendingFolderPath}`,
+            );
+            resolvedHostPath = pendingFolderPath;
+          }
+        }
+
+        outputChannel.appendLine('[WS] Install already in progress, restoring LocalInstaller');
+        await requestTroubleshootMode(apiOutputProvider, outputChannel);
+        await runLocalInstallation({
           projectId,
-          hostPath: statusRes.data.metadata.host_path ?? statusRes.data.path ?? '',
+          hostPath: resolvedHostPath,
           projectType: statusRes.data.type || 'nodejs',
           detectedPm: statusRes.data.metadata.detected_pm || 'npm',
           runCommand: statusRes.data.metadata.run_command,
           launchPort: statusRes.data.metadata.launch_port,
           envVars: statusRes.data.metadata.env_vars,
           versionConstraints: statusRes.data.metadata.version_constraints,
-        });
-
-        if (installOk) {
-          const localPort = installer.getLastLaunchPort();
-          outputChannel.appendLine('[Assistant] Local install completed without backend status transition. Promoting to running state.');
-          await handleTerminalStatus('running', localPort, undefined, { skipProcessLaunch: true });
-        }
+          services: statusRes.data.metadata.services,
+        }, true);
       }
     } catch (err) {
       // Non-fatal: just continue with normal event handlers
@@ -1326,34 +1743,50 @@ ws.on('log', (data: any) => {
   outputChannel.appendLine(`[WS] Connecting to: ${wsUrl}/ws/projects/${projectId}`);
 
 ws.on('start_installation', async (data: any) => {
-  outputChannel.appendLine(`[Assistant] Starting local installation for ${data.host_path}`);
-  apiOutputProvider.clearInstallAction();
+  const pendingFolderPath = await getPendingInstallFolderPath(context);
+  const eventHostPath = typeof data.host_path === 'string' ? data.host_path : '';
+  const normalizePath = (value: string) => path.resolve(value).replace(/\\/g, '/').toLowerCase();
 
-  const installer = new LocalInstaller(
-    auth.getApiClient(),
-    (msg: string, level?: string) => {
-      outputChannel.appendLine(level === 'error' ? `[!] ${msg}` : `  ${msg}`);
-    },
-    handleRuntimeMissing,
-    handleConflictResolution,
-    handleDockerImagePullApproval,
+  let resolvedHostPath = eventHostPath;
+  if (pendingFolderPath && fs.existsSync(pendingFolderPath)) {
+    const eventPathUsable = Boolean(eventHostPath) && fs.existsSync(eventHostPath);
+    const differsFromPending =
+      !eventHostPath ||
+      (eventPathUsable && normalizePath(eventHostPath) !== normalizePath(pendingFolderPath));
+
+    if (!eventPathUsable || differsFromPending) {
+      outputChannel.appendLine(
+        `[Assistant] Replacing backend host path with pending analyzed folder: ${pendingFolderPath}`,
+      );
+      resolvedHostPath = pendingFolderPath;
+    }
+  }
+
+  outputChannel.appendLine(`[Assistant] Starting local installation for ${resolvedHostPath}`);
+  
+  // Show persistent modal message with option to start installation
+  const action = await vscode.window.showInformationMessage(
+    'Ready to install. Start installation now?',
+    { modal: true },
+    { title: 'Start Installation' },
+    { title: 'Cancel', isCloseAffordance: true }
   );
 
-  const installOk = await installer.install({
-    projectId:          data.project_id,
-    hostPath:           data.host_path,
-    projectType:        data.project_type,
-    detectedPm:         data.detected_pm,
-    runCommand:         data.run_command,
-    launchPort:         data.launch_port,
-    envVars:            data.env_vars,
-    versionConstraints: data.version_constraints,
-  });
-
-  if (installOk) {
-    const localPort = installer.getLastLaunchPort();
-    outputChannel.appendLine('[Assistant] Local install completed without backend status transition. Promoting to running state.');
-    await handleTerminalStatus('running', localPort, undefined, { skipProcessLaunch: true });
+  if (action?.title === 'Start Installation') {
+    await requestTroubleshootMode(apiOutputProvider, outputChannel);
+    await runLocalInstallation({
+      projectId:          data.project_id,
+      hostPath:           resolvedHostPath,
+      projectType:        data.project_type,
+      detectedPm:         data.detected_pm,
+      runCommand:         data.run_command,
+      launchPort:         data.launch_port,
+      envVars:            data.env_vars,
+      versionConstraints: data.version_constraints,
+      services:           data.services,
+    }, true);
+  } else {
+    outputChannel.appendLine('[Assistant] Installation cancelled by user.');
   }
 });
 

@@ -1,8 +1,12 @@
 import json
 import os
 import re
+import html
 from groq import Groq
 from pathlib import Path
+from typing import Optional
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
 from dotenv import load_dotenv
 from .project_analyzer import ProjectInfo
 
@@ -55,8 +59,14 @@ class NLPProcessor:
             print(f"[NLPProcessor] No README found in {project_path}")
             return {}
 
+        install_guide_url = self._extract_install_guide_url(readme)
+        web_instructions = ""
+        if install_guide_url:
+            web_instructions = self._fetch_install_guide_text(install_guide_url)
+
+        combined_instructions = self._combine_instruction_sources(readme, web_instructions)
         print(f"[NLPProcessor] README found ({len(readme)} chars), sending to Groq...")
-        prompt = INSTRUCTION_PARSE_PROMPT.format(readme_content=readme[:6000])  # cap to avoid token limits
+        prompt = INSTRUCTION_PARSE_PROMPT.format(readme_content=combined_instructions[:10000])
 
         try:
             response = self.client.chat.completions.create(
@@ -74,6 +84,8 @@ class NLPProcessor:
         try:
             result = json.loads(raw)
             print(f"[NLPProcessor] Parsed OK — steps: {len(result.get('steps', []))}")
+            if install_guide_url:
+                result.setdefault('install_guide_url', install_guide_url)
             return result
         except json.JSONDecodeError:
             try:
@@ -83,10 +95,12 @@ class NLPProcessor:
                 clean = re.sub(r'```$', '', clean).strip()
                 result = json.loads(clean)
                 print(f"[NLPProcessor] Parsed after strip — steps: {len(result.get('steps', []))}")
+                if install_guide_url:
+                    result.setdefault('install_guide_url', install_guide_url)
                 return result
             except json.JSONDecodeError:
                 print(f"[NLPProcessor] Failed to parse Groq response as JSON: {raw[:300]}")
-                return {}
+                return {'install_guide_url': install_guide_url} if install_guide_url else {}
 
     def _find_readme(self, project_path: Path) -> str:
         candidates = [
@@ -110,6 +124,94 @@ class NLPProcessor:
                 return matches[0].read_text(encoding='utf-8', errors='ignore')
 
         return ""
+
+    def _extract_install_guide_url(self, readme: str) -> Optional[str]:
+        if not readme:
+            return None
+
+        patterns = [
+            r'\[([^\]]*install[^\]]*)\]\((https?://[^)\s]+)\)',
+            r'\[([^\]]*documentation[^\]]*)\]\((https?://[^)\s]+)\)',
+            r'(?im)^\s*(?:installation guide|install guide|docs?)\s*[:\-]\s*(https?://\S+)',
+            r'(https?://\S+)',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, readme)
+            if not match:
+                continue
+
+            if match.lastindex and match.lastindex >= 2:
+                return match.group(2).rstrip(').,]"\'')
+
+            return match.group(1 if match.lastindex else 0).rstrip(').,]"\'')
+
+        return None
+
+    def _combine_instruction_sources(self, readme: str, web_instructions: str) -> str:
+        if not web_instructions:
+            return readme
+
+        return (
+            f"README instructions:\n{readme}\n\n"
+            "Installation guide content fetched from the URL referenced in README:\n"
+            f"{web_instructions}"
+        )
+
+    def _fetch_install_guide_text(self, url: str) -> str:
+        if not isinstance(url, str) or not url.strip():
+            return ""
+
+        safe_url = url.strip()
+        if not re.match(r"^https?://", safe_url, flags=re.IGNORECASE):
+            return ""
+
+        request = Request(
+            safe_url,
+            headers={
+                "User-Agent": "ProjectAssistantBot/1.0 (+https://local.dev)",
+                "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8",
+            },
+        )
+
+        try:
+            with urlopen(request, timeout=8) as response:
+                content_type = response.headers.get("Content-Type", "")
+                payload = response.read(350000)
+        except (HTTPError, URLError, TimeoutError, ValueError) as exc:
+            print(f"[NLPProcessor] Failed to fetch install guide URL '{safe_url}': {exc}")
+            return ""
+        except Exception as exc:
+            print(f"[NLPProcessor] Unexpected install guide fetch error for '{safe_url}': {exc}")
+            return ""
+
+        text = payload.decode("utf-8", errors="ignore")
+        if "text/html" in content_type.lower() or "<html" in text.lower():
+            return self._html_to_text(text)
+        return text[:6000]
+
+    def _html_to_text(self, html_doc: str) -> str:
+        if not html_doc:
+            return ""
+
+        text = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", html_doc)
+        text = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", text)
+        text = re.sub(r"(?is)<noscript[^>]*>.*?</noscript>", " ", text)
+
+        text = re.sub(r"(?i)</(h[1-6]|p|li|pre|code|br|tr|td|th|section|article|div)>", "\n", text)
+        text = re.sub(r"(?is)<[^>]+>", " ", text)
+        text = html.unescape(text)
+        text = re.sub(r"\r", "\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        text = re.sub(r"[ \t]{2,}", " ", text)
+
+        lines = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped:
+                lines.append(stripped)
+
+        return "\n".join(lines)[:6000]
 
 
     # ── Canonical fallback steps per package manager ──────────────────────────
@@ -175,6 +277,10 @@ class NLPProcessor:
         if nlp_constraints:
             info.version_constraints = {**nlp_constraints, **info.version_constraints}
 
+        install_guide_url = nlp_result.get('install_guide_url')
+        if isinstance(install_guide_url, str) and install_guide_url.strip():
+            info.install_guide_url = install_guide_url.strip()
+
         # ── steps: use NLP steps unless they conflict with the detected PM ──
         nlp_steps = nlp_result.get('steps', [])
         if nlp_steps:
@@ -218,7 +324,7 @@ class NLPProcessor:
 
         return patched_steps
 
-    def _extract_run_command(self, steps: list) -> str | None:
+    def _extract_run_command(self, steps: list) -> Optional[str]:
         for step in steps:
             if not isinstance(step, dict):
                 continue

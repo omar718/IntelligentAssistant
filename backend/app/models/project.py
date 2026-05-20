@@ -1,6 +1,7 @@
 from sqlalchemy import Column, String, Integer, DateTime, JSON, ForeignKey
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from app.models.base import Base
 import enum
  
@@ -26,3 +27,6 @@ class Project(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     metadata_  = Column('metadata', JSON)  # JSONB in Postgres
+
+
+    stack_reports = relationship("StackReport", back_populates="project", cascade="all, delete-orphan")

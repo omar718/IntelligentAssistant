@@ -1,6 +1,17 @@
+"""
+Sprint 5 changes (── S5 ──):
+  • ErrorAnalyzer called on InstallResult.success == False
+  • Retry loop (max 3 attempts)
+  • InstallationHistory written on every final outcome
+
+Sprint 6 changes (── S6 ──):
+  • LearningModule.suggest_optimized_workflow() called before install loop
+  • LearningModule.record() replaces direct installation_writer call
+"""
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 import redis
@@ -10,21 +21,40 @@ from app.tasks import celery
 
 logger = logging.getLogger(__name__)
 
+MAX_RETRY = 3
+
 
 def _infer_project_type(project_type: str | None, metadata: dict, project_name: str | None = None) -> str | None:
     candidate = (project_type or metadata.get("detected_pm") or "").strip().lower()
 
     if candidate in {"nodejs", "node", "npm", "yarn", "pnpm"}:
-                return "nodejs"
-
+        return "nodejs"
     if candidate in {"python", "pip", "pipenv", "poetry"}:
-      return "python"
+        return "python"
+    if candidate in {"php", "composer"}:
+        return "php"
+    if candidate in {"java", "maven", "mvn", "gradle"}:
+        return "java"
+    if candidate in {"ruby", "bundler", "gem"}:
+        return "ruby"
+    if candidate in {"go", "golang"}:
+        return "go"
+    if candidate in {"dotnet", ".net", "csharp", "nuget"}:
+        return "dotnet"
 
     constraints = metadata.get("version_constraints") or {}
     if "python" in constraints:
         return "python"
     if "node" in constraints:
         return "nodejs"
+    if "php" in constraints:
+        return "php"
+    if "java" in constraints:
+        return "java"
+    if "ruby" in constraints:
+        return "ruby"
+    if "go" in constraints:
+        return "go"
 
     if project_name:
         lower_name = project_name.lower()
@@ -32,6 +62,16 @@ def _infer_project_type(project_type: str | None, metadata: dict, project_name: 
             return "python"
         if lower_name.endswith((".js", ".ts", ".jsx", ".tsx")):
             return "nodejs"
+        if lower_name.endswith(".php"):
+            return "php"
+        if lower_name.endswith((".java", ".kt")):
+            return "java"
+        if lower_name.endswith(".rb"):
+            return "ruby"
+        if lower_name.endswith(".go"):
+            return "go"
+        if lower_name.endswith((".cs", ".sln")):
+            return "dotnet"
 
     return None
 
@@ -46,7 +86,6 @@ def _get_loop():
 
 
 def _emit(project_id: str, event: str, data: dict):
-    """Emit a WS event via Redis pub/sub so API and worker processes can communicate."""
     try:
         payload = json.dumps({"event": event, "data": data})
         channel = f"project_events:{project_id}"
@@ -58,7 +97,6 @@ def _emit(project_id: str, event: str, data: dict):
 
 
 def _update_project_status(project_id: str, status: str):
-    """Update project status in DB using a sync session."""
     try:
         from app.db.session import get_sync_session
         from app.models.project import Project, ProjectStatus
@@ -74,19 +112,13 @@ def _update_project_status(project_id: str, status: str):
 @celery.task(bind=True, name="install_project")
 def install_project(self, project_id: str, metadata: dict):
     """
-    Execution engine — Sprint 3.
-    metadata is project.metadata_ from the DB:
-    {
-        "detected_pm": "npm" | "pip" | ...,
-        "steps": [...],
-        "env_vars": {...},
-        "version_constraints": {...},
-        "host_path": "C:\\Users\\...",   (added below)
-    }
+    metadata keys expected:
+      detected_pm, steps, env_vars, version_constraints, host_path
     """
     logger.info("install_project started for %s", project_id)
+    started_at = datetime.now(timezone.utc)
 
-    # ── Read project path from DB ──────────────────────────────────
+    # ── Read project from DB ───────────────────────────────────────
     try:
         from app.db.session import get_sync_session
         from app.models.project import Project
@@ -99,7 +131,6 @@ def install_project(self, project_id: str, metadata: dict):
             if project_type and not project.type:
                 project.type = project_type
                 db.commit()
-            project_name = project.name
     except Exception as e:
         logger.exception("Failed to load project from DB")
         _emit(project_id, "status_change", {
@@ -107,12 +138,21 @@ def install_project(self, project_id: str, metadata: dict):
             "new_status": "failed",
             "error": str(e),
         })
+        from app.core.ai.learning_module import LearningModule  # ── S6 ──
+        LearningModule().record(
+            project_id=project_id,
+            project_type="unknown",
+            steps=[],
+            errors=[{"step": "db_load", "message": str(e)}],
+            success=False,
+            resolution_used="none",
+        )
         raise
 
     version_constraints = metadata.get("version_constraints") or {}
     detected_pm = metadata.get("detected_pm", "")
 
-    # ── Stage 1: Detect conflicts ──────────────────────────────────
+    # ── Stage 1: Conflict detection ────────────────────────────────
     self.update_state(state="PROGRESS", meta={"progress": 10})
     _emit(project_id, "installation_progress", {
         "progress": 10,
@@ -124,16 +164,14 @@ def install_project(self, project_id: str, metadata: dict):
 
         detector = ConflictDetector()
 
-        # Build a simple namespace the detector can work with
         class _Info:
             pass
         info = _Info()
         info.version_constraints = version_constraints
-        info.ports = [3000]   # default; will be updated after detection
+        info.ports = [3000]
         info.project_type = project_type
 
         report = _get_loop().run_until_complete(detector.check(info))
-
         _emit(project_id, "conflict_detected", {
             "has_conflicts": report.has_conflicts,
             "conflicts": [
@@ -150,17 +188,15 @@ def install_project(self, project_id: str, metadata: dict):
                 for c in report.conflicts
             ],
         })
-
         resolver = ConflictResolver()
         plan = resolver.resolve(report)
 
     except ImportError:
-        # ConflictDetector not yet implemented — skip, continue with local
-        logger.warning("ConflictDetector not found, skipping conflict detection")
+        logger.warning("ConflictDetector not found, skipping")
         plan = None
         report = None
 
-    # ── Stage 2: Resolve + decide strategy ────────────────────────
+    # ── Stage 2: Decide strategy ───────────────────────────────────
     self.update_state(state="PROGRESS", meta={"progress": 25})
     _emit(project_id, "installation_progress", {
         "progress": 25,
@@ -169,10 +205,8 @@ def install_project(self, project_id: str, metadata: dict):
 
     use_venv = False
     node_version = None
-    use_docker = False
 
     if plan:
-        use_docker = plan.use_docker
         for step in plan.steps:
             strategy = step.strategy.value if hasattr(step.strategy, "value") else str(step.strategy)
             if strategy == "venv":
@@ -180,7 +214,37 @@ def install_project(self, project_id: str, metadata: dict):
             elif strategy == "nvm":
                 node_version = version_constraints.get("node")
 
-    # ── Stage 3: Install dependencies ─────────────────────────────
+    resolution_used = "venv" if use_venv else ("nvm" if node_version else "local")
+
+    # ── S6: Query LearningModule for optimized workflow ────────────
+    try:
+        from app.core.ai.learning_module import LearningModule
+        learning = LearningModule()
+        workflow = learning.suggest_optimized_workflow(project_type)
+        if workflow:
+            logger.info(
+                "LearningModule: suggested workflow for %s (sample=%d, success_rate=%.0f%%): %s",
+                project_type, workflow.sample_size,
+                workflow.success_rate * 100,
+                workflow.steps,
+            )
+            _emit(project_id, "workflow_suggestion", {
+                "steps": workflow.steps,
+                "success_rate": workflow.success_rate,
+                "sample_size": workflow.sample_size,
+                "suggested_resolution": workflow.suggested_resolution,
+            })
+            # Override resolution strategy if learning suggests a better one
+            if workflow.suggested_resolution == "venv" and not use_venv:
+                logger.info("LearningModule: overriding resolution to venv")
+                use_venv = True
+                resolution_used = "venv"
+        else:
+            logger.info("LearningModule: no workflow suggestion yet for %s", project_type)
+    except Exception as exc:
+        logger.warning("LearningModule suggestion failed (non-fatal): %s", exc)
+
+    # ── Stage 3: Install (with retry on failure) ───────────────────
     self.update_state(state="PROGRESS", meta={"progress": 40})
     _emit(project_id, "installation_progress", {
         "progress": 40,
@@ -190,64 +254,154 @@ def install_project(self, project_id: str, metadata: dict):
     def log_callback(line: str):
         _emit(project_id, "log", {"level": "info", "message": line})
 
-    rollback_ops = []
+    result = None
+    last_error: str = ""
 
-    try:
-        from app.core.execution.package_installer import NodeJsInstaller, PythonInstaller
+    for attempt in range(1, MAX_RETRY + 1):
+        try:
+            from app.core.execution.package_installer import get_installer
 
-        if project_type == "nodejs":
-            installer = NodeJsInstaller(
-                project_path=project_path,
-                node_version=node_version,
-                on_log=log_callback,
-            )
-        elif project_type == "python":
-            installer = PythonInstaller(
-                project_path=project_path,
-                use_venv=use_venv,
-                on_log=log_callback,
-            )
-            if use_venv:
-                venv_path = project_path / ".venv"
-                rollback_ops.append(
-                    lambda: venv_path.exists() and venv_path.unlink()
+            extra: dict = {}
+            if project_type in ("nodejs", "node"):
+                extra["node_version"] = node_version
+            elif project_type == "python":
+                extra["use_venv"] = use_venv
+
+            try:
+                installer = get_installer(
+                    project_type=project_type,
+                    project_path=project_path,
+                    on_log=log_callback,
+                    **extra,
                 )
-        else:
-            logger.warning(
-                "Project type is missing or unsupported for %s; defaulting to nodejs install path",
-                project_id,
-            )
-            project_type = "nodejs"
-            installer = NodeJsInstaller(
+            except ValueError:
+                logger.warning(
+                    "Unsupported project type '%s' — defaulting to nodejs", project_type
+                )
+                project_type = "nodejs"
+                installer = get_installer(
+                    project_type="nodejs",
+                    project_path=project_path,
+                    on_log=log_callback,
+                    node_version=node_version,
+                )
+
+            self.update_state(state="PROGRESS", meta={"progress": 40 + attempt * 10})
+            result = _get_loop().run_until_complete(installer.install())
+
+        except ImportError:
+            logger.warning("PackageInstaller not found — running in stub mode")
+            result = None
+            break
+
+        if result is None or result.success:
+            break
+
+        last_error = result.error_output or "Installation failed"
+        logger.warning("Attempt %d/%d failed: %s", attempt, MAX_RETRY, last_error[:200])
+
+        if attempt == MAX_RETRY:
+            break
+
+        _emit(project_id, "installation_progress", {
+            "progress": 40 + attempt * 10,
+            "step": f"Analyzing error (attempt {attempt}/{MAX_RETRY})",
+        })
+
+        try:
+            from app.core.execution.error_analyzer import ErrorAnalyzer
+
+            analyzer = ErrorAnalyzer(
                 project_path=project_path,
-                node_version=node_version,
+                project_type=project_type,
                 on_log=log_callback,
             )
+            analysis = analyzer.analyze(last_error)
+            apply_result = _get_loop().run_until_complete(
+                analyzer.apply_top_fix(analysis, project_path)
+            )
+            _emit(project_id, "log", {
+                "level": "info" if apply_result.success else "warning",
+                "message": (
+                    f"[S5] Fix applied: {apply_result.solution_used.description}"
+                    if apply_result.success
+                    else "[S5] No applicable fix found — retrying anyway"
+                ),
+            })
+        except Exception as exc:
+            logger.warning("ErrorAnalyzer raised an exception: %s", exc)
 
-        self.update_state(state="PROGRESS", meta={"progress": 60})
-        result = _get_loop().run_until_complete(installer.install())
+    # ── Stage 4: Finalise ──────────────────────────────────────────
+    final_success = result is None or result.success
 
-        if not result.success:
-            raise RuntimeError(result.error_output or "Installation failed")
+    if not final_success:
+        _update_project_status(project_id, "failed")
+        _emit(project_id, "status_change", {
+            "old_status": "installing",
+            "new_status": "failed",
+            "error": last_error,
+        })
+    else:
+        self.update_state(state="PROGRESS", meta={"progress": 100})
+        _update_project_status(project_id, "running")
+        _emit(project_id, "installation_progress", {"progress": 100, "step": "Installation complete"})
+        _emit(project_id, "status_change", {
+            "old_status": "installing",
+            "new_status": "running",
+            "port": 3000,
+        })
 
-    except ImportError:
-        # Installers not yet implemented — simulate success for testing
-        logger.warning("PackageInstaller not found — running in stub mode")
-        result = None
+    # ── S6: LearningModule.record() replaces direct installation_writer call ──
+    try:
+        from app.core.ai.learning_module import LearningModule
+        from app.core.execution.installation_writer import (
+            steps_from_result,
+            errors_from_result,
+        )
+        LearningModule().record(
+            project_id=project_id,
+            project_type=project_type or "unknown",
+            steps=steps_from_result(result),
+            errors=errors_from_result(result, [last_error] if last_error else []),
+            success=final_success,
+            resolution_used=resolution_used,
+        )
+    except Exception as exc:
+        logger.warning("LearningModule.record failed (non-fatal): %s", exc)
 
-    # ── Stage 4: Done ──────────────────────────────────────────────
-    self.update_state(state="PROGRESS", meta={"progress": 100})
-    _update_project_status(project_id, "running")
-
-    _emit(project_id, "installation_progress", {
-        "progress": 100,
-        "step": "Installation complete",
-    })
-    _emit(project_id, "status_change", {
-        "old_status": "installing",
-        "new_status": "running",
-        "port": 3000,
-    })
+    if not final_success:
+        raise RuntimeError(f"Installation failed after {MAX_RETRY} attempts: {last_error}")
 
     logger.info("install_project completed for %s", project_id)
-    return {"status": "success", "project_id": project_id}
+ 
+    # ── NEW: Generate PDF stack report on success (auth-gated) ───────────────
+    if health.ok and config.get("user_authenticated", False):
+        import asyncio
+        from app.services.generate_and_save_report import generate_and_save_report
+ 
+        report_data = {
+            "project_name":        config["project_name"],
+            "project_id":          project_id,
+            "user_email":          config.get("user_email", "unknown"),
+            "stack":               result.stack_info,          # dict from execution result
+            "environment":         result.env_vars,
+            "dependencies":        result.dependencies,
+            "installation_steps":  result.steps_log,
+            "health_checks":       health.checks_as_dicts(),
+            "conflicts_resolved":  resolution.conflicts_log,
+            "notes":               health.ai_notes or "",
+        }
+ 
+        try:
+            r2_key = asyncio.get_event_loop().run_until_complete(
+                generate_and_save_report(project_id, result.history_id, report_data)
+            )
+            self.update_state(state="DONE", meta={"progress": 100, "report_key": r2_key})
+        except Exception as exc:
+            logger.warning("Stack report generation failed (non-fatal): %s", exc)
+ 
+    return {
+        "status":     "success" if health.ok else "failed",
+        "progress":   100,
+        "details":    health.details,
+    }

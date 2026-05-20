@@ -1,13 +1,13 @@
 services:
   db:
-    image: postgres:17
+    image: pgvector/pgvector:pg17
     environment:
       POSTGRES_DB: intelligent_assistant
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       TZ: Europe/Paris
       PGTZ: Europe/Paris
-    command: ["postgres", "-c", "timezone=Europe/Paris"]
+    command: ["postgres", "-c", "timezone=Africa/Tunis"]
     ports:
       - "5432:5432"
     volumes:
