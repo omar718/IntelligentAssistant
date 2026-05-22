@@ -396,6 +396,7 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
         <LoginOverlay
           onClose={() => setActiveModal(null)}
           onLogin={onLogin}
+          onAdminLogin={() => routerNavigate('/admin')}
           onNavigate={(page) => {
             if (page === 'signup-modal') setActiveModal('signup-modal')
             else if (page === 'forgot-password-modal') setActiveModal('forgot-password-modal')

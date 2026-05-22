@@ -979,6 +979,16 @@
   background: rgba(255,255,255,0.12);
 }
 
+/* Improve numeric readability on light theme */
+:root[data-theme='light'] .admin-stat-value,
+:root[data-theme='light'] .admin-count,
+:root[data-theme='light'] .admin-pagination-header,
+:root[data-theme='light'] .admin-pagination-info,
+:root[data-theme='light'] .admin-table-date,
+:root[data-theme='light'] .admin-table-count {
+  color: #000;
+}
+
 .delete-modal-btn.confirm {
   background: #f87171;
   color: #fff;

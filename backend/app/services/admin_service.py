@@ -291,6 +291,7 @@ async def get_analytics(
     ).all()
 
     total_installs = sum(int(r.success or 0) + int(r.failed or 0) for r in installs_rows)
+    total_projects = sum(int(r.cnt or 0) for r in stack_rows)
     total_success = sum(int(r.success or 0) for r in installs_rows)
 
     success_rate_trend = []
@@ -310,7 +311,7 @@ async def get_analytics(
     stack_distribution = []
     for row in stack_rows:
         count = int(row.cnt or 0)
-        percentage = round((count / total_installs) * 100, 1) if total_installs > 0 else 0.0
+        percentage = round((count / total_projects) * 100, 1) if total_projects > 0 else 0.0
         stack_distribution.append(StackSlice(stack=str(row.stack), count=count, percentage=percentage))
 
     return AnalyticsOut(

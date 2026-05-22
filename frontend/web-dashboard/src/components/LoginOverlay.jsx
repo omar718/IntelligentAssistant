@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { authApi, userApi } from '../api/client'
 import '../styles/Auth.css'
 
-function LoginOverlay({ onNavigate, onClose, onLogin }) {
+function LoginOverlay({ onNavigate, onClose, onLogin, onAdminLogin }) {
   const { t } = useTranslation()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -38,6 +38,10 @@ function LoginOverlay({ onNavigate, onClose, onLogin }) {
 
       // Step 3: Pass the profile up to App.jsx
       onLogin(profile)
+
+      if (profile?.role?.toLowerCase() === 'admin') {
+        onAdminLogin?.()
+      }
 
       // Step 4: Close the modal
       onClose()

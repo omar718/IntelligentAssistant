@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { userApi, healthApi, adminApi } from '../api/client'
+import { userApi, adminApi } from '../api/client'
 import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import TechBadge from './TechBadge'
 import Toast from './Toast'
@@ -303,14 +303,6 @@ function StackDistributionChart({ data, theme }) {
   )
 }
 
-// ── Health indicator ───────────────────────────────────────────────────────────
-function HealthStatus({ health, loading }) {
-  const { t } = useTranslation()
-  if (loading) return <div className="admin-health-badge loading">{t('admin.checking')}</div>
-  if (!health)  return <div className="admin-health-badge offline">{t('admin.offline')}</div>
-  return <div className="admin-health-badge online">{t('admin.online')}</div>
-}
-
 // ── Delete confirm modal ───────────────────────────────────────────────────────
 function DeleteUserModal({ user, onCancel, onConfirm }) {
   const { t } = useTranslation()
@@ -468,7 +460,6 @@ function AdminPanel({ onBack, theme, onToggleTheme }) {
   const { t } = useTranslation()
   const [projects, setProjects]   = useState([])
   const [stats, setStats]         = useState(null)
-  const [health, setHealth]       = useState(null)
   const [users, setUsers]         = useState([])
   const [analytics, setAnalytics] = useState(null)
   const [selectedDauDate, setSelectedDauDate] = useState(null)
@@ -487,7 +478,6 @@ function AdminPanel({ onBack, theme, onToggleTheme }) {
 
   const [loadingProjects, setLoadingProjects] = useState(true)
   const [loadingStats, setLoadingStats]       = useState(true)
-  const [loadingHealth, setLoadingHealth]     = useState(true)
   const [loadingUsers, setLoadingUsers] = useState(true)
   const [loadingAnalytics, setLoadingAnalytics] = useState(true)
   const [toast, setToast]                     = useState({ message: '', type: '' })
@@ -511,14 +501,6 @@ function AdminPanel({ onBack, theme, onToggleTheme }) {
         setStats(null)
       })
       .finally(() => setLoadingStats(false))
-  }
-
-  const fetchHealthStatus = () => {
-    setLoadingHealth(true)
-    return healthApi.check()
-      .then(data => setHealth(data))
-      .catch(() => setHealth(null))
-      .finally(() => setLoadingHealth(false))
   }
 
   const fetchAnalytics = () => {
@@ -548,15 +530,6 @@ function AdminPanel({ onBack, theme, onToggleTheme }) {
       .finally(() => setLoadingAnalytics(false))
   }
 
-  const handleGlobalRefresh = () => {
-    console.log('[AdminPanel] Global refresh triggered')
-    fetchProjects()
-    fetchUsers()
-    fetchUserStats()
-    fetchHealthStatus()
-    fetchAnalytics()
-  }
-
   // ── Fetch projects from API ─────────────────────────────────────────────────────
   const fetchProjects = () => {
     setLoadingProjects(true)
@@ -565,10 +538,17 @@ function AdminPanel({ onBack, theme, onToggleTheme }) {
       .then(data => {
         console.log('[AdminPanel] ============ PROJECTS API RESPONSE ============')
         console.log('[AdminPanel] Full response:', JSON.stringify(data, null, 2))
-        console.log('[AdminPanel] Response type:', typeof data)
+        console.log('[AdminPanel] Response type:', Array.isArray(data) ? 'ARRAY' : typeof data)
         console.log('[AdminPanel] Response.items type:', Array.isArray(data?.items) ? 'ARRAY' : typeof data?.items)
+        console.log('[AdminPanel] Response.projects type:', Array.isArray(data?.projects) ? 'ARRAY' : typeof data?.projects)
         
-        const projectList = data.items || []
+        const projectList = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.items)
+            ? data.items
+            : Array.isArray(data?.projects)
+              ? data.projects
+              : []
         console.log('[AdminPanel] Total projects to display:', projectList.length)
         if (projectList.length > 0) {
           console.log('[AdminPanel] First project:', projectList[0])
@@ -651,9 +631,8 @@ function AdminPanel({ onBack, theme, onToggleTheme }) {
     // Fetch projects
     fetchProjects()
 
-    // Fetch current user stats/health/analytics
+    // Fetch current user stats/analytics
     fetchUserStats()
-    fetchHealthStatus()
     fetchAnalytics()
 
     // Fetch real users
@@ -866,25 +845,6 @@ function AdminPanel({ onBack, theme, onToggleTheme }) {
         </div>
       </header>
 
-      {/* ── Page title ── */}
-      <div className="admin-title-row">
-        <h1 className="admin-title">{t('admin.title')}</h1>
-        <p className="admin-subtitle">{t('admin.subtitle')}</p>
-      </div>
-
-      <div className="admin-global-refresh-row">
-        <button
-          className="admin-refresh-btn admin-refresh-btn--global"
-          onClick={handleGlobalRefresh}
-          title={t('admin.refreshAll')}
-        >
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-          </svg>
-          {t('admin.refresh')}
-        </button>
-      </div>
-
       {/* ── Tabs ── */}
       <div className="admin-tabs">
         {['overview', 'projects', 'users'].map(tab => (
@@ -930,60 +890,10 @@ function AdminPanel({ onBack, theme, onToggleTheme }) {
                   />
                   <StatCard
                     label={t('admin.avgProjectsPerUser')}
-                    value={users.length > 0 ? (users.reduce((sum, u) => sum + u.install_count, 0) / users.length).toFixed(1) : 0}
+                    value={users.length > 0 ? (projects.length / users.length).toFixed(1) : 0}
                     accent="#fbbf24"
                     icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>}
                   />
-                  <StatCard
-                    label={t('admin.systemStatus')}
-                    value={loadingHealth ? t('admin.checking') : health ? t('admin.healthy') : t('admin.down')}
-                    accent={health ? '#4ade80' : '#f87171'}
-                    icon={<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>}
-                  />
-                </div>
-
-                {/* Health Section */}
-                <div style={{ marginTop: '2rem' }}>
-                  <h3 className="admin-section-title" style={{ marginBottom: '1rem' }}>{t('admin.systemHealth')}</h3>
-                  {loadingHealth ? (
-                    <p className="admin-loading">{t('admin.checkingSystemHealth')}</p>
-                  ) : (
-                    <div className="admin-health-panel">
-                      <div className={`admin-health-status-card ${health ? 'online' : 'offline'}`}>
-                        <div className="admin-health-status-icon">
-                          {health ? (
-                            <svg viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                            </svg>
-                          ) : (
-                            <svg viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
-                            </svg>
-                          )}
-                        </div>
-                        <div>
-                          <div className="admin-health-status-title">
-                            {health ? t('admin.allSystemsOperational') : t('admin.backendUnreachable')}
-                          </div>
-                          <div className="admin-health-status-sub">
-                            {health ? t('admin.backendRunningNormally') : t('admin.couldNotConnectBackend')}
-                          </div>
-                        </div>
-                      </div>
-
-                      {health && typeof health === 'object' && (
-                        <div className="admin-health-details">
-                          {Object.entries(health).map(([key, val]) => (
-                            <div className="admin-health-row" key={key}>
-                              <span className="admin-health-key">{key}</span>
-                              <span className="admin-health-val">{String(val)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                    </div>
-                  )}
                 </div>
 
                 {/* DAU Chart Section */}
@@ -1273,14 +1183,6 @@ function AdminPanel({ onBack, theme, onToggleTheme }) {
                 )})}
               </div>
             )}
-          </div>
-        )}
-
-        {/* HEALTH TAB */}
-        {activeTab === 'health' && (
-          <div className="admin-section">
-            <h2 className="admin-section-title">{t('admin.systemHealth')}</h2>
-            <p className="admin-loading">{t('admin.healthMoved')}</p>
           </div>
         )}
 

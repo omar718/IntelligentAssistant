@@ -3,15 +3,28 @@ Admin → Users router
 All routes require role == 'admin' via the require_admin dependency.
 """
 from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_admin
 from app.core.database import get_db
+from app.models.project import Project
 from app.models.user import User
+from app.schemas.auth import ProjectSummary
 from app.schemas.admin import AdminUserOut, AdminUserPage, AdminUserPatch, AuditLogPage
 from app.services import admin_service
 
 router = APIRouter()
+
+
+@router.get("/projects", response_model=list[ProjectSummary])
+async def list_projects(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+) -> list[ProjectSummary]:
+    result = await db.execute(select(Project).order_by(Project.created_at.desc()))
+    projects = result.scalars().all()
+    return [ProjectSummary.model_validate(project) for project in projects]
 
 
 @router.get("/users", response_model=AdminUserPage)
