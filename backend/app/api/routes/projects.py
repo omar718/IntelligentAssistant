@@ -18,7 +18,7 @@ from app.core.analysis.project_analyzer import ProjectAnalyzer
 from app.core.analysis.nlp_processor import NLPProcessor
 from app.core.config import settings
 from app.core.database import get_db                     
-from app.api.dependencies import CurrentUser
+from app.api.dependencies import CurrentUser, OptionalCurrentUser
 from app.websocket.router import manager
 from app.db.crud import project_crud
 from app.models.project import Project, ProjectStatus
@@ -165,14 +165,14 @@ class CreateProjectRequest(BaseModel):
 @router.post("/api/projects")
 async def create_project(
     req: CreateProjectRequest,
-    current_user: CurrentUser,              # use auth dependency
+    current_user: OptionalCurrentUser,              # allow anonymous
     db: AsyncSession = Depends(get_db),
 ):
     project_id = f"proj_{uuid.uuid4().hex[:8]}"
     task_id = req.task_id or f"task_{uuid.uuid4().hex[:8]}"
     project_path = None
-    logger.info("current_user: %s", current_user)  # ← add this
-    logger.info("current_user.id: %s", current_user.id)  # ← and this
+    logger.info("current_user: %s", current_user)
+    logger.info("current_user.id: %s", getattr(current_user, 'id', None))
 
     set_task_progress(
         task_id,
@@ -282,7 +282,7 @@ async def create_project(
             await project_crud.create(db, {       # ← await added
                 "id": project_id,
                 "name": project_name,
-                "user_id": current_user.id,      # <-- added user_id
+                "user_id": getattr(current_user, 'id', None),
                 "type": primary_language,
                 "path": str(project_path),
                 "port": info.launch_port,
@@ -372,7 +372,7 @@ async def create_project(
 @router.get("/api/projects/tasks/{task_id}")
 async def get_project_task_status(
     task_id: str,
-    current_user: CurrentUser,
+    current_user: OptionalCurrentUser,
 ):
     with TASK_PROGRESS_LOCK:
         task = TASK_PROGRESS.get(task_id)
@@ -386,7 +386,7 @@ async def get_project_task_status(
 @router.post("/api/projects/tasks/{task_id}/cancel")
 async def cancel_project_task(
     task_id: str,
-    current_user: CurrentUser,
+    current_user: OptionalCurrentUser,
 ):
     cancelled = _request_task_cancel(task_id)
     if not cancelled:

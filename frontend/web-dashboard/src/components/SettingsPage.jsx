@@ -19,19 +19,6 @@ function formatLastLogin(value) {
   })
 }
 
-function formatInfoDate(value) {
-  if (!value) return 'Not available'
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return 'Not available'
-
-  return date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })
-}
-
 function formatSessionDate(value) {
   if (!value) return 'Not available'
 
@@ -127,8 +114,7 @@ function SettingsPage({ user, onBack, onUserUpdate }) {
   const [profileImage, setProfileImage] = useState(
     user?.profile_picture || user?.profilePicture || '',
   )
-  const [activeSection, setActiveSection] = useState('home')
-  const [searchQuery, setSearchQuery] = useState('')
+  const [activeSection, setActiveSection] = useState('personal')
   const [selectedLanguage, setSelectedLanguage] = useState(() => {
     const currentLanguage = i18n.language || localStorage.getItem('language') || 'en'
     if (currentLanguage.startsWith('fr')) return 'french'
@@ -162,70 +148,6 @@ function SettingsPage({ user, onBack, onUserUpdate }) {
   const lastLogin = useMemo(() => {
     return formatLastLogin(user?.last_login || user?.lastLogin || user?.last_login_at)
   }, [user])
-
-  const passwordLastChanged = useMemo(() => {
-    return formatInfoDate(
-      user?.password_last_changed || user?.password_changed_at || user?.passwordChangedAt || user?.last_password_change,
-    )
-  }, [user])
-
-  const sectionOptions = useMemo(() => ([
-    {
-      id: 'home',
-      title: t('app.account'),
-      description: t('app.searchAccount'),
-      terms: [t('app.account'), t('app.searchAccount')],
-    },
-    {
-      id: 'personal',
-      title: t('settings.personalInfo'),
-      description: `${t('settings.profilePic')}, ${t('settings.name')}, ${t('settings.email')}`,
-      terms: [
-        t('settings.personalInfo'),
-        t('settings.profilePic'),
-        t('settings.uploadProfilePic'),
-        t('settings.name'),
-        t('settings.email'),
-        t('settings.language'),
-        t('settings.pwLastChangedDate'),
-        user?.name || '',
-        user?.email || '',
-      ],
-    },
-    {
-      id: 'security',
-      title: t('settings.privacySecurity'),
-      description: `${t('settings.lastLogin')}, ${t('settings.changePassword')}`,
-      terms: [
-        t('settings.privacySecurity'),
-        t('settings.lastLogin'),
-        t('settings.changePassword'),
-        t('settings.hideChangePassword'),
-        t('settings.updatePassword'),
-      ],
-    },
-    {
-      id: 'language',
-      title: t('settings.language'),
-      description: `${t('settings.english')}, ${t('settings.french')}, ${t('settings.arabic')}, ${t('settings.german')}`,
-      terms: [
-        t('settings.language'),
-        t('settings.english'),
-        t('settings.french'),
-        t('settings.arabic'),
-        t('settings.german'),
-      ],
-    },
-  ]), [t, user])
-
-  const searchMatches = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
-    if (!query) return []
-
-    return sectionOptions.filter((section) => (
-      section.terms.some((value) => value && value.toLowerCase().startsWith(query))
-    ))
-  }, [searchQuery, sectionOptions])
 
   useEffect(() => {
     const handleLanguageChange = (language) => {
@@ -531,39 +453,6 @@ function SettingsPage({ user, onBack, onUserUpdate }) {
           <h2>{t('settings.personalInfo')}</h2>
           <div className="ga-personal-wrap">
             <div className="ga-info-list">
-              <div className="ga-info-item ga-info-item-profile">
-                <div className="ga-info-profile-meta">
-                  <h3>{t('settings.profilePic')}</h3>
-                  <div className="profile-picture-actions">
-                    <label className="upload-btn" htmlFor="profile-upload-input">{t('settings.uploadProfilePic')}</label>
-                    <button
-                      type="button"
-                      className="upload-btn remove-profile-btn"
-                      disabled={isUploadingImage || !profileImage}
-                      onClick={() => setShowRemoveConfirmation(true)}
-                    >
-                      Remove picture
-                    </button>
-                  </div>
-                  <input
-                    id="profile-upload-input"
-                    className="upload-input"
-                    type="file"
-                    accept="image/*"
-                    disabled={isUploadingImage}
-                    onChange={handleImageUpload}
-                  />
-                  {uploadMessage ? <p className="password-message">{uploadMessage}</p> : null}
-                </div>
-                <div className="ga-info-profile-pic">
-                  {profileImage ? (
-                    <img className="ga-info-avatar" src={profileImage} alt="Profile" />
-                  ) : (
-                    <div className="ga-info-avatar ga-info-avatar-fallback">{getInitials(user?.name)}</div>
-                  )}
-                </div>
-              </div>
-
               <div className="ga-info-item">
                 <h3>{t('settings.name')}</h3>
                 <p className="ga-info-value">{user?.name || t('settings.guestUser')}</p>
@@ -585,11 +474,6 @@ function SettingsPage({ user, onBack, onUserUpdate }) {
                         ? t('settings.german')
                       : t('settings.english')}
                 </p>
-              </div>
-
-              <div className="ga-info-item">
-                <h3>{t('settings.pwLastChangedDate')}</h3>
-                <p className="ga-info-value">{passwordLastChanged}</p>
               </div>
             </div>
           </div>
@@ -774,53 +658,7 @@ function SettingsPage({ user, onBack, onUserUpdate }) {
       )
     }
 
-    return (
-      <div className="ga-home-content">
-        <div className="ga-search-wrap">
-          <span className="ga-search-icon">&#9906;</span>
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder={t('app.searchAccount')}
-            aria-label={t('app.searchAccount')}
-          />
-          {searchQuery ? (
-            <button
-              type="button"
-              className="ga-search-clear"
-              onClick={() => setSearchQuery('')}
-              aria-label={t('app.clearSearch')}
-              title={t('app.clearSearch')}
-            >
-              ×
-            </button>
-          ) : null}
-        </div>
-        {searchQuery && searchMatches.length === 0 ? (
-          <p className="ga-search-empty">{t('app.noSearchResults')}</p>
-        ) : null}
-
-        {searchQuery && searchMatches.length > 0 ? (
-          <div className="ga-search-results">
-            {searchMatches.map((section) => (
-              <button
-                key={section.id}
-                type="button"
-                className="ga-search-result"
-                onClick={() => {
-                  setActiveSection(section.id)
-                  setSearchQuery('')
-                }}
-              >
-                <span className="ga-search-result-title">{section.title}</span>
-                <span className="ga-search-result-desc">{section.description}</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    )
+    return null
   }
 
   return (
@@ -839,10 +677,6 @@ function SettingsPage({ user, onBack, onUserUpdate }) {
 
       <main className="ga-layout">
         <aside className="ga-sidebar">
-          <button className={`ga-nav-item ${activeSection === 'home' ? 'active' : ''}`} type="button" onClick={() => setActiveSection('home')}>
-            <span className="ga-nav-dot dot-home">&#8962;</span>
-            <span>Home</span>
-          </button>
           <button className={`ga-nav-item ${activeSection === 'personal' ? 'active' : ''}`} type="button" onClick={() => setActiveSection('personal')}>
             <span className="ga-nav-dot dot-personal">&#9783;</span>
             <span>{t('settings.personalInfo')}</span>

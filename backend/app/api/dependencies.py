@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import Cookie, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -51,6 +51,34 @@ async def get_current_user(
     return user
 
 
+async def get_optional_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    db: AsyncSession = Depends(get_db),
+) -> Optional[User]:
+    """
+    Validate the Bearer JWT and return the authenticated User, or `None` when
+    no credentials were provided. Raises 401 only if credentials are present
+    but invalid/expired.
+    """
+    if credentials is None:
+        return None
+
+    try:
+        payload = decode_access_token(credentials.credentials)
+    except JWTError:
+        raise _401
+
+    user_id: str = payload.get("sub")
+    if not user_id:
+        raise _401
+
+    user = await get_user_by_id(db, user_id)
+    if user is None or not user.is_active:
+        raise _401
+
+    return user
+
+
 async def require_admin(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
@@ -67,4 +95,5 @@ async def require_admin(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+OptionalCurrentUser = Annotated[Optional[User], Depends(get_optional_user)]
 AdminUser = Annotated[User, Depends(require_admin)]

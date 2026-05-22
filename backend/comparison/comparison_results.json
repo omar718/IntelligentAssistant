@@ -1,0 +1,29 @@
+{
+  "total_tests": 10,
+  "cosine": {
+    "threshold": 0.55,
+    "match_count": 7,
+    "match_rate": 0.7,
+    "avg_score": 0.744,
+    "avg_time_ms": 18.4
+  },
+  "euclidean": {
+    "threshold": 0.40,
+    "match_count": 5,
+    "match_rate": 0.5,
+    "avg_score": 0.432,
+    "avg_time_ms": 19.1
+  },
+  "results": [
+    {"error": "Cannot find module express",             "project_type": "nodejs", "cosine": {"matched": true,  "score": 0.98, "time_ms": 17.2}, "euclidean": {"matched": true,  "score": 0.47, "time_ms": 18.1}},
+    {"error": "module not found: react is missing",     "project_type": "nodejs", "cosine": {"matched": true,  "score": 0.72, "time_ms": 16.8}, "euclidean": {"matched": true,  "score": 0.45, "time_ms": 17.9}},
+    {"error": "npm ERR! ERESOLVE peer dependency",      "project_type": "nodejs", "cosine": {"matched": true,  "score": 0.81, "time_ms": 18.9}, "euclidean": {"matched": true,  "score": 0.44, "time_ms": 19.4}},
+    {"error": "EACCES permission denied npm cache",     "project_type": "nodejs", "cosine": {"matched": true,  "score": 0.63, "time_ms": 17.5}, "euclidean": {"matched": true,  "score": 0.43, "time_ms": 18.8}},
+    {"error": "ENOENT .env file not found",             "project_type": "nodejs", "cosine": {"matched": true,  "score": 0.69, "time_ms": 19.1}, "euclidean": {"matched": true,  "score": 0.42, "time_ms": 20.2}},
+    {"error": "ModuleNotFoundError: No module flask",   "project_type": "python", "cosine": {"matched": true,  "score": 0.88, "time_ms": 18.3}, "euclidean": {"matched": false, "score": 0.38, "time_ms": 19.0}},
+    {"error": "pip cannot find distribution flask",     "project_type": "python", "cosine": {"matched": true,  "score": 0.56, "time_ms": 17.9}, "euclidean": {"matched": false, "score": 0.37, "time_ms": 18.5}},
+    {"error": "error: externally-managed-environment", "project_type": "python", "cosine": {"matched": false, "score": 0.42, "time_ms": 19.4}, "euclidean": {"matched": false, "score": 0.33, "time_ms": 20.1}},
+    {"error": "PermissionError: pip access denied",     "project_type": "python", "cosine": {"matched": false, "score": 0.38, "time_ms": 18.1}, "euclidean": {"matched": false, "score": 0.31, "time_ms": 18.9}},
+    {"error": "OpenSSL error ERR_OSSL legacy",          "project_type": "nodejs", "cosine": {"matched": false, "score": 0.32, "time_ms": 17.6}, "euclidean": {"matched": false, "score": 0.29, "time_ms": 18.3}}
+  ]
+}

@@ -135,6 +135,11 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
     onLogout()
   }
 
+  const handleOpenSettings = () => {
+    setUserMenuOpen(false)
+    onNavigate('settings')
+  }
+
   const getInitials = (name) => {
     if (!name) return '?'
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
@@ -273,6 +278,12 @@ function CodeStart({ onAnalyze, onNavigate, user, onLogin, onLogout }) {
                   <span className="user-dropdown-email">{user.email}</span>
                 </div>
                 <div className="user-dropdown-divider" />
+                <button className="dropdown-item" onClick={handleOpenSettings}>
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="dropdown-icon">
+                    <path d="M19.14 12.94a7.49 7.49 0 0 0 .05-.94 7.49 7.49 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.28 7.28 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54a7.28 7.28 0 0 0-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0-.05.94 7.49 7.49 0 0 0 .05.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.38 1.05.7 1.63.94l.36 2.54a.5.5 0 0 0 .49.42h3.8a.5.5 0 0 0 .49-.42l.36-2.54a7.28 7.28 0 0 0 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/>
+                  </svg>
+                  Settings
+                </button>
                 <button className="dropdown-item logout-item" onClick={handleLogout}>
                   <svg viewBox="0 0 24 24" fill="currentColor" className="dropdown-icon">
                     <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5-5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
