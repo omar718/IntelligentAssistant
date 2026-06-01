@@ -2,3 +2,54 @@
   position: relative;
   min-height: 100vh;
 }
+
+.app-success-popup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(2, 6, 23, 0.55);
+  backdrop-filter: blur(8px);
+}
+
+.app-success-popup-card {
+  position: relative;
+  width: min(520px, 100%);
+  border-radius: 18px;
+  border: 1px solid rgba(125, 177, 255, 0.28);
+  background: var(--surface-elevated);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+  padding: 1.75rem 1.75rem 1.5rem;
+  text-align: center;
+}
+
+.app-success-popup-close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  color: var(--text-primary);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.app-success-popup-title {
+  margin: 0.25rem 0 0.75rem;
+  color: var(--text-primary);
+  font-size: 1.5rem;
+  font-weight: 800;
+}
+
+.app-success-popup-message {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 1rem;
+}

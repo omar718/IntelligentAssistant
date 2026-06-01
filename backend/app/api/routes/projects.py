@@ -1212,5 +1212,30 @@ async def install_complete(
                 "error": body.error or "Installation failed",
             },
         })
+    # ── LearningModule.record() ────────────────────────────────────────
+
+    try:
+        from app.core.ai.learning_module import LearningModule
+        import asyncio
+
+        errors = [{"step": "launch", "message": body.error}] if body.error else []
+
+        _success = body.success
+        _errors = [{"step": "launch", "message": body.error}] if body.error else []
+        _project_type = project.type or "unknown"
+
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: LearningModule().record(
+                project_id=project_id,
+                project_type=_project_type,
+                steps=[],
+                errors=_errors,
+                success=_success,
+                resolution_used="local",
+            )
+        )
+    except Exception as exc:
+        logger.warning("LearningModule.record from install-complete failed: %s", exc)
 
     return {"ok": True}

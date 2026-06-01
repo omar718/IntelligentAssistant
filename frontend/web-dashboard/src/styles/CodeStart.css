@@ -1042,23 +1042,10 @@
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.5rem 0.5rem;
-  flex: 1;
-}
-
-.sidebar-nav-main,
-.sidebar-nav-bottom {
-  display: flex;
-  flex-direction: column;
+  justify-content: flex-start;
   gap: 0.2rem;
-}
-
-.sidebar-nav-bottom {
-  margin-top: auto;
-  padding-top: 0.4rem;
-  border-top: 1px solid var(--border-soft);
+  padding: 0.5rem 0.5rem;
+  flex: 0 0 auto;
 }
 
 .sidebar-item {

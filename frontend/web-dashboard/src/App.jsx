@@ -29,6 +29,7 @@ function MainApp({ user, onLogin, onLogout, onUserUpdate, theme, onToggleTheme }
   const [cloneDir, setCloneDir] = useState('')
   const [showVSCodeModal, setShowVSCodeModal] = useState(false)
   const [projectError, setProjectError] = useState(null)
+  const [successPopup, setSuccessPopup] = useState(null)
 
   const handleAnalyze = (url, dir) => {
     console.log('[App] handleAnalyze called with:', { url, dir })
@@ -44,6 +45,19 @@ function MainApp({ user, onLogin, onLogout, onUserUpdate, theme, onToggleTheme }
     setGitUrl('')
     setCloneDir('')
     setProjectError(null)
+  }
+
+  const handleProcessingSuccess = ({ title, message } = {}) => {
+    setSuccessPopup({
+      title: title || 'Project ready',
+      message: message || 'Your project has been cloned and processed successfully.',
+    })
+    setCurrentPage('home')
+    setProjectError(null)
+  }
+
+  const closeSuccessPopup = () => {
+    setSuccessPopup(null)
   }
 
   const handleProcessingError = (error) => {
@@ -73,6 +87,7 @@ function MainApp({ user, onLogin, onLogout, onUserUpdate, theme, onToggleTheme }
           gitUrl={gitUrl}
           cloneDir={cloneDir}
           onBack={handleBack}
+          onSuccess={handleProcessingSuccess}
           onVSCodeNotFound={() => setShowVSCodeModal(true)}
           onError={handleProcessingError}
         />
@@ -91,6 +106,18 @@ function MainApp({ user, onLogin, onLogout, onUserUpdate, theme, onToggleTheme }
 
       {showVSCodeModal && (
         <VSCodeModal onClose={() => setShowVSCodeModal(false)} />
+      )}
+
+      {successPopup && (
+        <div className="app-success-popup-overlay" role="dialog" aria-modal="true" aria-labelledby="project-ready-title">
+          <div className="app-success-popup-card">
+            <button className="app-success-popup-close" onClick={closeSuccessPopup} aria-label="Close success message">
+              &times;
+            </button>
+            <h2 className="app-success-popup-title" id="project-ready-title">{successPopup.title}</h2>
+            <p className="app-success-popup-message">{successPopup.message}</p>
+          </div>
+        </div>
       )}
       </>
     </div>

@@ -126,11 +126,11 @@ class MessageResponse(BaseModel):
 class ProjectSummary(BaseModel):
     id: str
     name: str
-    name: str
     type: Optional[str]
     status: str
     created_at: datetime
     port: Optional[int] = None
+    has_report: bool = False
 
     model_config = {"from_attributes": True}
 

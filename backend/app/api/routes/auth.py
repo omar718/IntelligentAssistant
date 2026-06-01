@@ -328,6 +328,7 @@ async def get_my_projects(
 ) -> PaginatedProjects:
     from sqlalchemy import select, func
     from app.models.project import Project
+    from app.models.report import StackReport
 
     query = select(Project).where(Project.user_id == current_user.id)
 
@@ -344,9 +345,30 @@ async def get_my_projects(
     result = await db.execute(query)
     projects = result.scalars().all()
 
+    project_ids = [p.id for p in projects]
+    projects_with_reports: set[str] = set()
+    if project_ids:
+        report_result = await db.execute(
+            select(StackReport.project_id)
+            .where(StackReport.project_id.in_(project_ids))
+            .distinct()
+        )
+        projects_with_reports = set(report_result.scalars().all())
+
     from app.schemas.auth import ProjectSummary
     return PaginatedProjects(
-        items=[ProjectSummary.model_validate(p) for p in projects],
+        items=[
+            ProjectSummary(
+                id=p.id,
+                name=p.name,
+                type=p.type.value if hasattr(p.type, "value") else p.type,
+                status=p.status.value if hasattr(p.status, "value") else str(p.status),
+                created_at=p.created_at,
+                port=p.port,
+                has_report=p.id in projects_with_reports,
+            )
+            for p in projects
+        ],
         total=total,
         page=page,
         per_page=per_page,

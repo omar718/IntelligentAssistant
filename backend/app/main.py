@@ -15,6 +15,7 @@ from app.api.routes import analytics as admin_analytics
 from app.api.routes import users as admin_users           
 from app.websocket.router import router as ws_router   
 from app.core.ai.error_pattern_bootstrap import bootstrap_error_patterns_on_startup
+from app.core.ai.embedding_startup import backfill_embeddings_on_startup
 from app.api.routes import reports
 
 
@@ -34,6 +35,7 @@ app = FastAPI(
 @app.on_event("startup")
 async def startup_bootstrap() -> None:
     bootstrap_error_patterns_on_startup()
+    backfill_embeddings_on_startup()
 
 app.add_middleware(
     CORSMiddleware,

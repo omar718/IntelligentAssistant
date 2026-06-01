@@ -64,26 +64,34 @@ class LearningModule:
         success: bool,
         resolution_used: str,
     ) -> None:
-        """
-        Persist an InstallationHistory row.
-        Thin wrapper around installation_writer.record() — kept here so
-        install.py only needs to import LearningModule, not two modules.
-        """
-        from app.core.execution.installation_writer import record
-        from datetime import datetime, timezone
+        # Write InstallationHistory directly — no installation_writer dependency
+        try:
+            from app.db.session import get_sync_session
+            from app.models.installation_history import InstallationHistory
+            from datetime import datetime, timezone
 
-        record(
-            project_id=project_id,
-            started_at=datetime.now(timezone.utc),
-            steps=steps,
-            errors=errors,
-            success=success,
-            resolution_used=resolution_used,
-        )
+            with get_sync_session() as db:
+                row = InstallationHistory(
+                    project_id=project_id,
+                    started_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(timezone.utc),
+                    success=success,
+                    steps=steps,
+                    errors=errors,
+                    resolution_used=resolution_used,
+                )
+                db.add(row)
+                db.commit()
+        except Exception as exc:
+            logger.warning("InstallationHistory write failed: %s", exc)
+
+        # Seed error pattern with embedding if install failed
+        if not success and errors:
+            self._maybe_seed_error_pattern(project_type, errors)
+
         logger.info(
             "LearningModule.record: project_type=%s success=%s", project_type, success
         )
-
     # ── Public: suggest_optimized_workflow ────────────────────────────────────
 
     def suggest_optimized_workflow(
@@ -232,3 +240,61 @@ class LearningModule:
             }
             for r in rows
         ]
+    def _maybe_seed_error_pattern(self, project_type: str, errors: list) -> None:
+        print(f"[DEBUG] _maybe_seed_error_pattern called: project_type={project_type}, errors={errors[:1]}")
+        print(f"[DEBUG] record called: success={success}, errors_count={len(errors) if errors else 0}, errors={errors[:1] if errors else []}")
+        try:
+            import re, json
+            from app.db.session import get_sync_session
+            from sqlalchemy import text
+
+            for error in errors[:1]:
+                msg = error.get("message", "").strip()
+                if not msg or len(msg) < 10:
+                    continue
+
+                signature = re.escape(msg.splitlines()[0][:240])
+
+                # Generate embedding before insert
+                try:
+                    from app.core.ai.embedding_service import EmbeddingService
+                    embedding = EmbeddingService().embed(msg.splitlines()[0][:240])
+                    vector_str = "[" + ",".join(f"{v:.6f}" for v in embedding) + "]"
+                except Exception:
+                    vector_str = None
+
+                with get_sync_session() as db:
+                    exists = db.execute(
+                        text("SELECT id FROM error_patterns WHERE signature = :sig"),
+                        {"sig": signature}
+                    ).fetchone()
+                    if exists:
+                        continue
+
+                    if vector_str:
+                        db.execute(
+                            text(f"""
+                                INSERT INTO error_patterns
+                                    (signature, category, project_type, solutions,
+                                    occurrences, success_rate, embedding)
+                                VALUES
+                                    (:sig, 'install_failure', :pt, '[]',
+                                    1, 0.0, '{vector_str}'::vector)
+                            """),
+                            {"sig": signature, "pt": project_type}
+                        )
+                    else:
+                        db.execute(
+                            text("""
+                                INSERT INTO error_patterns
+                                    (signature, category, project_type, solutions,
+                                    occurrences, success_rate)
+                                VALUES
+                                    (:sig, 'install_failure', :pt, '[]', 1, 0.0)
+                            """),
+                            {"sig": signature, "pt": project_type}
+                        )
+                        db.commit()
+
+        except Exception as exc:
+            logger.warning("_maybe_seed_error_pattern failed (non-fatal): %s", exc)

@@ -412,7 +412,6 @@ def generate_stack_report(report_data: dict) -> bytes:
     total_checks  = len(health)
     passed_checks = sum(1 for c in health if c.get("passed"))
     total_deps    = len(deps)
-    total_dur     = sum(st.get("duration_s", 0) for st in steps if st.get("duration_s"))
 
     kpi_style_val = ParagraphStyle(
         "kpiv", fontSize=20, textColor=TEAL,
@@ -430,10 +429,9 @@ def generate_stack_report(report_data: dict) -> bytes:
         [[
             _kpi_cell(f"{passed_checks}/{total_checks}", "Health Checks Passed"),
             _kpi_cell(total_deps, "Dependencies Installed"),
-            _kpi_cell(f"{total_dur}s", "Total Install Time"),
             _kpi_cell(stack.get("port", "—"), "Running on Port"),
         ]],
-        colWidths=[(PAGE_W - 2 * MARGIN) / 4] * 4,
+        colWidths=[(PAGE_W - 2 * MARGIN) / 3] * 3,
     )
     kpi_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), TEAL_LIGHT),

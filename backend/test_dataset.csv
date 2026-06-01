@@ -10,3 +10,4 @@ IsAmitprajapati/Full-Stack-E-Commerce-MERN-APP,Nodejs,install_failure,ConflictEr
 HuXn-WebDev/MERN-E-Commerce-Store,Nodejs,install_failure,ConflictError,Process\ exited\ immediately\ with\ code\ 1\.,,False,2026-05-12
 i-love-flamingo/flamingo-commerce,GO,install_failure,ConflictError,Docker\ container\ bound\ port\ 8080\ but\ did\ not\ return\ HTTP\ responses\ in\ time\.,,False,2026-05-12
 kelvin-mai/nest-commerce,Nodejs,install_failure,ConflictError,Docker\ container\ bound\ port\ 3003\ but\ did\ not\ return\ HTTP\ responses\ in\ time\.,,False,2026-05-12
+abinashpanigrahi/ECommerce-SpringBoot-Backend-Project,Java,install_failure,ConflictError,No plugin found for prefix 'spring-boot' in the current project and in the plugin groups,2026-05-12

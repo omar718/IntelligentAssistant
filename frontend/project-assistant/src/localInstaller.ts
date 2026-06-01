@@ -15,6 +15,7 @@ export interface InstallContext {
   envVars?: Record<string, string>;
   versionConstraints?: Record<string, string>;
   troubleshootMode?: TroubleshootMode;
+  javaBuildCwd?: string;
 }
 
 export interface RuntimeMissingInfo {
@@ -198,8 +199,8 @@ export class LocalInstaller {
     }
 
     if (ctx.projectType === 'java') {
-      const mvnOrGradle = await this.resolveJavaBuildTool(ctx.hostPath);
-      if (!mvnOrGradle) {
+      const mvnOrGradleResult = await this.resolveJavaBuildTool(ctx.hostPath);
+      if (!mvnOrGradleResult) {
         const choice = await this.resolveConflict({
           component: 'mvn/gradle',
           projectType: ctx.projectType,
@@ -358,11 +359,12 @@ export class LocalInstaller {
     }
 
     if (ctx.projectType === 'java') {
-      const tool = await this.resolveJavaBuildTool(cwd);
+      const result = await this.resolveJavaBuildTool(cwd);
+      const tool = result?.tool ?? null;
+      const javaCwd = result?.cwd ?? cwd;
       if (!tool) {
         throw new Error('No Java build tool found. Install Maven or Gradle and try again.');
       }
-
       this.onLog(`[Info] Build tool: ${tool}`);
 
       if (tool === 'gradle') {
@@ -395,11 +397,11 @@ export class LocalInstaller {
       }
 
       if (tool === 'maven') {
-        return await this.runCommand('mvn dependency:resolve -q', cwd, ctx.projectId);
+        const mvn = await this.findMaven() ?? 'mvn';
+        return await this.runCommand(`${mvn} dependency:resolve -q`, javaCwd, ctx.projectId);
       }
-
-      const gradlew = this.gradleWrapper(cwd);
-      return await this.runCommand(`${gradlew} dependencies --configuration runtimeClasspath -q`, cwd, ctx.projectId);
+      const gradlew = this.gradleWrapper(javaCwd);
+      return await this.runCommand(`${gradlew} dependencies --configuration runtimeClasspath -q`, javaCwd, ctx.projectId);
     }
 
     if (ctx.projectType === 'ruby') {
@@ -508,7 +510,7 @@ export class LocalInstaller {
     }
 
     this.proc = cp.spawn(cmd, [], {
-      cwd,
+      cwd: ctx.javaBuildCwd ?? cwd,
       shell: true,
       detached: false,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -680,11 +682,20 @@ export class LocalInstaller {
     }
 
     if (ctx.projectType === 'java') {
-      const tool = await this.resolveJavaBuildTool(cwd);
+      const result = await this.resolveJavaBuildTool(cwd);
+      const tool = result?.tool ?? null;
+      const javaCwd = result?.cwd ?? cwd;
       if (!tool) throw new Error('No Java build tool found for this project');
-      if (tool === 'maven') return 'mvn spring-boot:run -q';
-      const gradlew = this.gradleWrapper(cwd);
-      if (await this.fileContains(cwd, 'build.gradle', 'spring-boot') || await this.fileContains(cwd, 'build.gradle.kts', 'spring-boot')) {
+      if (tool === 'maven') {
+        const mvn = await this.findMaven() ?? 'mvn';
+        ctx.javaBuildCwd = javaCwd;
+        return `${mvn} spring-boot:run -q`;
+      }
+      const gradlew = this.gradleWrapper(javaCwd);
+      ctx.javaBuildCwd = javaCwd;
+      const hasSpringBoot = await this.fileContains(javaCwd, 'build.gradle', 'spring-boot') ||
+                            await this.fileContains(javaCwd, 'build.gradle.kts', 'spring-boot');
+      if (hasSpringBoot) {
         return `${gradlew} bootRun`;
       }
       return `${gradlew} run`;
@@ -1552,13 +1563,90 @@ export class LocalInstaller {
     ].filter(Boolean).join('\n');
   }
 
-  private async resolveJavaBuildTool(cwd: string): Promise<'maven' | 'gradle' | null> {
-    if (fs.existsSync(path.join(cwd, 'pom.xml')) && await this.commandExists('mvn')) return 'maven';
-    const hasGradleFile = fs.existsSync(path.join(cwd, 'build.gradle')) || fs.existsSync(path.join(cwd, 'build.gradle.kts'));
-    if (hasGradleFile && (fs.existsSync(path.join(cwd, 'gradlew')) || fs.existsSync(path.join(cwd, 'gradlew.bat')) || await this.commandExists('gradle'))) return 'gradle';
+  private async resolveJavaBuildTool(cwd: string): Promise<{ tool: 'maven' | 'gradle'; cwd: string } | null> {
+    const searchDirs = [cwd];
+    try {
+      const entries = fs.readdirSync(cwd, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+          searchDirs.push(path.join(cwd, entry.name));
+        }
+      }
+    } catch {}
+
+    for (const dir of searchDirs) {
+      if (fs.existsSync(path.join(dir, 'pom.xml'))) {
+        const mvn = await this.findMaven();
+        if (mvn) {
+          if (dir !== cwd) this.onLog(`[Info] Found pom.xml in subdirectory: ${path.relative(cwd, dir)}`);
+          return { tool: 'maven', cwd: dir };
+        }
+      }
+      const hasGradleFile = fs.existsSync(path.join(dir, 'build.gradle')) || 
+                            fs.existsSync(path.join(dir, 'build.gradle.kts'));
+      if (hasGradleFile && (
+        fs.existsSync(path.join(dir, 'gradlew')) || 
+        fs.existsSync(path.join(dir, 'gradlew.bat')) || 
+        await this.commandExists('gradle')
+      )) return { tool: 'gradle', cwd: dir };
+    }
+
     return null;
   }
+  private async findMaven(): Promise<string | null> {
+      // TEMPORARY DIAGNOSTIC
+    this.onLog(`[Debug] MAVEN_HOME=${process.env.MAVEN_HOME}`);
+    this.onLog(`[Debug] M2_HOME=${process.env.M2_HOME}`);
+    this.onLog(`[Debug] PATH contains maven: ${(process.env.PATH ?? '').toLowerCase().includes('maven')}`);
+    
+    const chocoLib = 'C:\\ProgramData\\chocolatey\\lib\\maven';
+    this.onLog(`[Debug] chocoLib exists: ${fs.existsSync(chocoLib)}`);
+    
+    if (fs.existsSync(chocoLib)) {
+      const entries = fs.readdirSync(chocoLib, { withFileTypes: true });
+      this.onLog(`[Debug] chocoLib entries: ${entries.map(e => e.name).join(', ')}`);
+      for (const entry of entries) {
+        const candidate = path.join(chocoLib, entry.name, 'bin', 'mvn.cmd');
+        this.onLog(`[Debug] checking candidate: ${candidate} → exists: ${fs.existsSync(candidate)}`);
+      }
+    }
 
+    // 1. Try PATH first
+    try {
+      await this.execAndCapture('mvn -version', process.cwd());
+      return 'mvn';
+    } catch {}
+
+    // 2. Chocolatey shim (standard location)
+    const chocoShim = 'C:\\ProgramData\\chocolatey\\bin\\mvn.cmd';
+    if (fs.existsSync(chocoShim)) return chocoShim;
+
+    // 3. Chocolatey lib folder — scan for versioned install (e.g. apache-maven-3.9.x)
+    const chocoMavenLib = 'C:\\ProgramData\\chocolatey\\lib\\maven';
+    if (fs.existsSync(chocoMavenLib)) {
+      try {
+        const entries = fs.readdirSync(chocoMavenLib, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            const candidate = path.join(chocoMavenLib, entry.name, 'bin', 'mvn.cmd');
+            if (fs.existsSync(candidate)) {
+              this.onLog(`[Info] Found Maven via Chocolatey lib: ${candidate}`);
+              return `"${candidate}"`;
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 4. MAVEN_HOME / M2_HOME env var
+    const mavenHome = process.env.MAVEN_HOME || process.env.M2_HOME;
+    if (mavenHome) {
+      const mvnBin = path.join(mavenHome, 'bin', 'mvn.cmd');
+      if (fs.existsSync(mvnBin)) return `"${mvnBin}"`;
+    }
+
+    return null;
+  }
   private async resolveJavaBuildToolForDocker(cwd: string): Promise<'maven' | 'gradle' | null> {
     const pom = await this.findFileRecursive(cwd, 'pom.xml', 3);
     if (pom) return 'maven';

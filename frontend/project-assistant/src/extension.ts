@@ -779,11 +779,6 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
     (message, level) => apiOutputProvider.appendLine(`[Auth] ${message}`, level ?? 'info')
   );
 
-  // ─── Auto-Launch Logic ────────────────────────────────────────────────────
-  if (!authManager.isAuthenticated()) {
-    showOptionalLoginPrompt();
-  }
-
   // ─── Folder Callbacks ─────────────────────────────────────────────────────
   registerOpenFolderCallback((folderPath: string, projectId?: string) => {
     void (async () => {
@@ -1110,6 +1105,10 @@ export async function activate(context: vscode.ExtensionContext) {  // ← THIS 
   await authManager.activate();
   // Ensure webview reflects current auth state after activation
   try { apiOutputProvider.setAuthenticated(authManager.isAuthenticated()); } catch {}
+  // Show the login prompt only if no saved session was restored.
+  if (!authManager.isAuthenticated()) {
+    void showOptionalLoginPrompt();
+  }
   await maybeResumePendingInstall();
 
 } // ← closing brace for activate()

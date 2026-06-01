@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { projectsApi } from '../api/client'
 import '../styles/Processing.css'
 
-function Processing({ gitUrl, cloneDir, onBack }) {
+function Processing({ gitUrl, cloneDir, onBack, onSuccess }) {
   const [completed, setCompleted] = useState(false)
   const [error, setError] = useState(null)
   const [isCancelling, setIsCancelling] = useState(false)
@@ -14,6 +14,17 @@ function Processing({ gitUrl, cloneDir, onBack }) {
       ? `task_${window.crypto.randomUUID()}`
       : `task_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`)
   )
+  const redirectTimeoutRef = useRef(null)
+
+  const scheduleRedirect = () => {
+    if (redirectTimeoutRef.current) {
+      clearTimeout(redirectTimeoutRef.current)
+    }
+
+    redirectTimeoutRef.current = setTimeout(() => {
+      onBack()
+    }, 2800)
+  }
 
   useEffect(() => {
     let stopped = false
@@ -34,12 +45,18 @@ function Processing({ gitUrl, cloneDir, onBack }) {
       finished = true
       if (pollInterval) clearInterval(pollInterval)
 
+      setCompleted(true)
+
       if ((status.stage || '').toLowerCase() === 'failed' || status.error) {
         setError(status.error || 'Project creation failed.')
         return
       }
 
-      setCompleted(true)
+      onSuccess?.({
+        title: 'Project ready',
+        message: 'Your project has been cloned and processed successfully.',
+      })
+      scheduleRedirect()
 
       if (status.host_path) {
         const normalizedPath = status.host_path.replace(/\\/g, '/')
@@ -51,8 +68,6 @@ function Processing({ gitUrl, cloneDir, onBack }) {
           window.location.href = `vscode://file/${normalizedPath}`
         })
       }
-
-      setTimeout(onBack, 2500)
     }
 
     const applyTaskStatus = (status) => {
@@ -181,6 +196,7 @@ function Processing({ gitUrl, cloneDir, onBack }) {
       stopped = true
       clearTimeout(startHandle)
       if (pollInterval) clearInterval(pollInterval)
+      if (redirectTimeoutRef.current) clearTimeout(redirectTimeoutRef.current)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

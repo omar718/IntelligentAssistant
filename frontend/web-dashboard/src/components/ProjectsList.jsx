@@ -26,6 +26,11 @@ function formatDate(iso) {
 
 async function handleDownload(project) {
   try {
+    if (!project?.has_report) {
+      alert('No report is available for this project yet.')
+      return
+    }
+
     const token = localStorage.getItem('access_token')
 
     const res = await fetch(`/api/projects/${project.id}/report`, {

@@ -365,60 +365,75 @@ Rules:
 
     # ── Auto-promote successful Groq fixes to DB ──────────────────────────────
 
-    async def _promote_to_pattern(
-        self,
-        error_output: str,
-        solution: Solution,
-    ) -> None:
-        """
-        When Groq suggests a fix that actually works, save it as a permanent
-        ErrorPattern row with an embedding so future similar errors hit Stage 1.
-        """
+    async def _promote_to_pattern(self, error_output: str, solution: Solution) -> None:
         try:
-            import re as _re
+            import re
             from app.db.session import get_sync_session
-            from app.models.error_pattern import ErrorPattern
+            from sqlalchemy import text
+            import json as _json
+            solutions_json = _json.dumps([{
+                "description": solution.description,
+                "commands": solution.commands,
+                "success_rate": solution.success_rate,
+            }])
 
-            # Build a clean signature from the first line of the error
+
             first_line = error_output.strip().splitlines()[0][:240]
-            signature = _re.escape(first_line)
+            signature = re.escape(first_line)
+
+            # Generate embedding BEFORE inserting
+            try:
+                from app.core.ai.embedding_service import EmbeddingService
+                svc = EmbeddingService()
+                embedding = svc.embed(first_line)
+                vector_str = "[" + ",".join(f"{v:.6f}" for v in embedding) + "]"
+            except Exception:
+                vector_str = None
 
             with get_sync_session() as db:
-                # Don't duplicate if this signature already exists
-                existing = (
-                    db.query(ErrorPattern)
-                    .filter(ErrorPattern.signature == signature)
-                    .first()
-                )
+                # Check duplicate
+                existing = db.execute(
+                    text("SELECT id FROM error_patterns WHERE signature = :sig"),
+                    {"sig": signature}
+                ).fetchone()
                 if existing:
                     return
 
-                row = ErrorPattern(
-                    signature=signature,
-                    category="auto_learned",
-                    project_type=self.project_type,
-                    solutions=[{
-                        "description": solution.description,
-                        "commands": solution.commands,
-                        "success_rate": solution.success_rate,
-                    }],
-                    occurrences=1,
-                    success_rate=solution.success_rate,
-                )
-                db.add(row)
+                # Insert with embedding in one atomic operation
+                if vector_str:
+                    db.execute(
+                        text(f"""
+                            INSERT INTO error_patterns
+                                (signature, category, project_type, solutions,
+                                occurrences, success_rate, embedding)
+                            VALUES
+                                (:sig, 'auto_learned', :pt, '{solutions_json.replace("'", "''")}',
+                                1, :sr, '{vector_str}'::vector)
+                        """),
+                        {"sig": signature, "pt": self.project_type, "sr": solution.success_rate}
+                    )
+                else:
+                    db.execute(
+                        text("""
+                            INSERT INTO error_patterns
+                                (signature, category, project_type, solutions,
+                                occurrences, success_rate)
+                            VALUES
+                                (:sig, 'auto_learned', :pt, CAST(:sol AS json), 1, :sr)
+                        """),
+                        {
+                            "sig": signature,
+                            "pt": self.project_type,
+                            "sol": json.dumps([{
+                                "description": solution.description,
+                                "commands": solution.commands,
+                                "success_rate": solution.success_rate,
+                            }]),
+                            "sr": solution.success_rate,
+                        }
+                    )
                 db.commit()
-                db.refresh(row)
-                pattern_id = row.id
-
-            # Generate and store embedding for the new pattern
-            try:
-                from app.core.ai.embedding_service import EmbeddingService
-                EmbeddingService().store_embedding(pattern_id, first_line)
-                logger.info(
-                    "Auto-promoted Groq fix to DB pattern id=%s with embedding", pattern_id
-                )
-            except Exception as embed_exc:
-                logger.warning("Embedding generation for promoted pattern failed: %s", embed_exc)
+                logger.info("Auto-promoted pattern with embedding in single transaction")
 
         except Exception as exc:
             logger.warning("_promote_to_pattern failed (non-fatal): %s", exc)
